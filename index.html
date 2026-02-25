@@ -36,7 +36,7 @@ const CONFIG={
   listName:"Expense Log",
   configListName:"Expense Config",
   googleMapsKey:"AIzaSyCgm0GDTAcsYUJtTVrZLR3xS8sazfqXxSY",
-  version:"1.0.0",
+  version:"1.2.0",
 };
 const GRAPH="https://graph.microsoft.com/v1.0";
 
@@ -45,8 +45,8 @@ const GRAPH="https://graph.microsoft.com/v1.0";
 // ============================================================
 const ROLES={ADMIN:"admin",ACCOUNTING:"accounting",EMPLOYEE:"employee"};
 const ROLE_LABELS={admin:"Admin",accounting:"Accounting",employee:"Employee"};
-const STATUS={DRAFT:"Draft",SUBMITTED:"Submitted",APPROVED:"Approved",REJECTED:"Rejected",PROCESSED:"Processed"};
-const STATUS_COLORS={Draft:"#6FA0B0",Submitted:"#CDA04B",Approved:"#3DA06B",Rejected:"#D35B4B",Processed:"#6A8EC8"};
+const STATUS={DRAFT:"Draft",SUBMITTED:"Submitted",APPROVED:"Approved",REJECTED:"Rejected",PENDING_PAYMENT:"Pending Payment",PROCESSED:"Processed",PAID:"Paid"};
+const STATUS_COLORS={Draft:"#6FA0B0",Submitted:"#CDA04B",Approved:"#3DA06B",Rejected:"#D35B4B","Pending Payment":"#6A8EC8",Processed:"#6A8EC8",Paid:"#3DA06B"};
 
 const DEFAULT_CATEGORIES=["Office Supplies","Travel","Meals/Entertainment","Software/Subscriptions","Maintenance/Repairs","Marketing","Professional Development","Vehicle/Fuel","Other"];
 const DEFAULT_EXPENSE_TYPES=["Personal Reimbursement","Mileage","Credit Card Reconciliation"];
@@ -64,6 +64,13 @@ const DEFAULT_SETTINGS={
   categories:DEFAULT_CATEGORIES,
   expenseTypes:DEFAULT_EXPENSE_TYPES,
   properties:DEFAULT_PROPERTIES,
+  powerAutomateUrl:"",
+};
+
+const DEFAULT_ROUTING={
+  "Personal Reimbursement":{approvers:["bturner@newshirepm.com","cmunson@newshirepm.com","jwhite@vanrockre.com"],accounting:[]},
+  "Mileage":{approvers:["bturner@newshirepm.com","cmunson@newshirepm.com","jwhite@vanrockre.com"],accounting:[]},
+  "Credit Card Reconciliation":{approvers:["bturner@newshirepm.com","cmunson@newshirepm.com","jwhite@vanrockre.com"],accounting:[]},
 };
 
 // ============================================================
@@ -165,7 +172,7 @@ async function loadConfig(){
       return JSON.parse(items[0].fields.ConfigJSON);
     }
   }catch(e){console.warn("Config load failed, using defaults:",e)}
-  return{settings:DEFAULT_SETTINGS,users:DEFAULT_USERS};
+  return{settings:DEFAULT_SETTINGS,users:DEFAULT_USERS,routing:DEFAULT_ROUTING};
 }
 
 async function saveConfig(config){
@@ -219,6 +226,65 @@ async function getAttachments(expenseId){
     const data=await spGet(`${GRAPH}/sites/${CONFIG.siteId}/drive/root:/Expense Attachments/${expenseId}:/children`);
     return(data.value||[]).map(f=>({name:f.name,size:f.size,url:f.webUrl,id:f.id}));
   }catch(e){return[]}
+}
+
+async function getAttachmentBase64(fileId){
+  const t=await getToken();const r=await fetch(`${GRAPH}/sites/${CONFIG.siteId}/drive/items/${fileId}/content`,{headers:{Authorization:`Bearer ${t}`}});
+  if(!r.ok)throw new Error(`Download failed: ${r.status}`);const blob=await r.blob();
+  return new Promise((res,rej)=>{const rd=new FileReader();rd.onloadend=()=>res({base64:rd.result.split(",")[1],contentType:blob.type||"application/octet-stream"});rd.onerror=rej;rd.readAsDataURL(blob)});
+}
+
+// ============================================================
+// EMAIL (Graph /me/sendMail)
+// ============================================================
+async function sendEmail({to,subject,htmlBody,attachments}){
+  const t=await getToken();
+  const toR=(Array.isArray(to)?to:[to]).map(e=>({emailAddress:{address:e}}));
+  const msg={subject,body:{contentType:"HTML",content:htmlBody},toRecipients:toR};
+  if(attachments?.length>0)msg.attachments=attachments.map(a=>({"@odata.type":"#microsoft.graph.fileAttachment",name:a.name,contentType:a.contentType,contentBytes:a.base64}));
+  const r=await fetch(`${GRAPH}/me/sendMail`,{method:"POST",headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"},body:JSON.stringify({message:msg,saveToSentItems:true})});
+  if(!r.ok)throw new Error(`Email failed (${r.status}): ${await r.text()}`);
+}
+
+function buildExpenseEmailHtml(expense,action,opts={}){
+  const{approverName,rejectionNotes,powerAutomateUrl,expenseId}=opts;
+  const lineItems=expense.LineItemsJSON?JSON.parse(expense.LineItemsJSON):[];
+  const mileStops=expense.MileageStopsJSON?JSON.parse(expense.MileageStopsJSON):[];
+  const mileProps=expense.MileagePropertiesJSON?JSON.parse(expense.MileagePropertiesJSON):[];
+  const isM=expense.ExpenseType==="Mileage";
+  const isCC=expense.ExpenseType==="Credit Card Reconciliation";
+  const hdr={
+    submitted:{t:"New Expense Submitted",c:"#CDA04B",i:`A new ${expense.ExpenseType} expense has been submitted and requires your review.`},
+    approved:{t:"Expense Approved \u2014 Ready for Processing",c:"#3DA06B",i:`An expense has been approved by ${approverName||"an admin"} and is ready for processing.`},
+    rejected:{t:"Expense Rejected",c:"#D35B4B",i:"Your expense has been reviewed and was not approved."},
+    processed:{t:"Credit Card Expense Processed",c:"#6A8EC8",i:"Your credit card expense has been processed."},
+    pending_payment:{t:"Expense Pending Payment",c:"#6A8EC8",i:`An expense has been processed and is pending payment on the next payroll cycle.`},
+  }[action];
+  let rows=`<tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px;width:140px">Type</td><td style="padding:6px 12px;font-size:12px;font-weight:600;color:#E8ECEE">${expense.ExpenseType}</td></tr><tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Date</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${fmtDate(expense.ExpenseDate)}</td></tr><tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Submitted By</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${expense.SubmittedByName||expense.SubmittedBy}</td></tr><tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px;font-weight:700">Amount</td><td style="padding:6px 12px;font-size:16px;font-weight:800;color:#CDA04B">${fmtMoney(expense.Amount)}</td></tr>`;
+  if(!isM&&expense.Vendor)rows+=`<tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Vendor</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${expense.Vendor}</td></tr>`;
+  if(expense.Category)rows+=`<tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Category</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${expense.Category}</td></tr>`;
+  if(expense.Description)rows+=`<tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Notes</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${expense.Description}</td></tr>`;
+  if(expense.Tax>0)rows+=`<tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Tax</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${fmtMoney(expense.Tax)}</td></tr>`;
+  if(expense.Tip>0)rows+=`<tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Tip</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${fmtMoney(expense.Tip)}</td></tr>`;
+  if(expense.CardLast4)rows+=`<tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Card</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">\u2022\u2022\u2022\u2022 ${expense.CardLast4}</td></tr>`;
+  if(isM){rows+=`<tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Miles</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${expense.Miles} mi @ $${(expense.MileageRate||0.70).toFixed(2)}/mi</td></tr>`;if(mileStops.length>0)rows+=`<tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Route</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${mileStops.join(" \u2192 ")}</td></tr>`;if(mileProps.length>0)rows+=`<tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Properties</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${mileProps.join(", ")}</td></tr>`}
+  if(action==="rejected"&&rejectionNotes)rows+=`<tr><td style="padding:6px 12px;color:#D35B4B;font-size:12px;font-weight:700">Reason</td><td style="padding:6px 12px;font-size:12px;color:#D35B4B">${rejectionNotes}</td></tr>`;
+  let lineHtml="";
+  if(lineItems.length>0){lineHtml=`<div style="margin-top:16px"><div style="font-size:11px;font-weight:700;color:#8BA8B4;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Line Items</div><table style="width:100%;border-collapse:collapse;font-size:12px;color:#E8ECEE"><tr style="background:#1A3440"><th style="text-align:left;padding:6px 8px;color:#6FA0B0;font-size:10px">Category</th><th style="text-align:left;padding:6px 8px;color:#6FA0B0;font-size:10px">Description</th><th style="text-align:left;padding:6px 8px;color:#6FA0B0;font-size:10px">Property</th><th style="text-align:right;padding:6px 8px;color:#6FA0B0;font-size:10px">Amount</th></tr>`;lineItems.forEach(li=>{lineHtml+=`<tr style="border-bottom:1px solid #2A5262"><td style="padding:5px 8px">${li.category||"\u2014"}</td><td style="padding:5px 8px">${li.description||"\u2014"}</td><td style="padding:5px 8px">${li.property||"\u2014"}${li.sfAddress?` (${li.sfAddress})`:""}</td><td style="padding:5px 8px;text-align:right;font-weight:600">${fmtMoney(li.amount)}</td></tr>`});lineHtml+=`</table></div>`}
+  let actBtns="";
+  if(action==="approved"&&powerAutomateUrl&&expenseId){const sep=powerAutomateUrl.includes("?")?"&":"?";const lbl=isCC?"\u2713 Mark as Processed":"\u2713 Mark as Pending Payment";actBtns=`<div style="margin-top:20px;padding:16px;background:#1A3440;border:1px solid #2A5262;border-radius:8px;text-align:center"><div style="font-size:11px;font-weight:700;color:#8BA8B4;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px">Take Action</div><a href="${powerAutomateUrl}${sep}expenseId=${expenseId}&action=${isCC?"processed":"pending_payment"}" style="display:inline-block;padding:10px 24px;background:#3DA06B;color:#FFF;text-decoration:none;border-radius:6px;font-weight:700;font-size:13px;margin-right:12px">${lbl}</a><a href="${powerAutomateUrl}${sep}expenseId=${expenseId}&action=flagged" style="display:inline-block;padding:10px 24px;background:#D35B4B;color:#FFF;text-decoration:none;border-radius:6px;font-weight:700;font-size:13px">\u26A0 Flag Issue</a></div>`}
+  return`<!DOCTYPE html><html><body style="margin:0;padding:0;background:#1C3740;font-family:'Segoe UI',sans-serif"><div style="max-width:600px;margin:20px auto;background:#1E3A44;border-radius:8px;overflow:hidden;border:1px solid #2A5262"><div style="background:#15292F;padding:16px 20px;border-bottom:2px solid ${hdr.c}"><div style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:2px;color:#CDA04B">NewShire Property Management</div><div style="font-size:18px;font-weight:800;color:#E8ECEE;margin-top:2px">${hdr.t}</div></div><div style="padding:20px"><p style="font-size:13px;color:#A3C5D0;margin-bottom:16px">${hdr.i}</p><table style="width:100%;border-collapse:collapse;background:#15292F;border-radius:6px;overflow:hidden">${rows}</table>${lineHtml}${actBtns}</div><div style="padding:12px 20px;background:#15292F;text-align:center;font-size:9px;color:#3D6B7B">NewShire Expense Manager v${CONFIG.version}</div></div></body></html>`;
+}
+
+async function sendNotificationEmail(expense,action,{routing,settings,users,approverName,rejectionNotes,expenseId}){
+  const route=routing?.[expense.ExpenseType];if(!route)return;
+  try{
+    if(action==="submitted"){const a=route.approvers||[];if(a.length===0)return;await sendEmail({to:a,subject:`[Expense Review] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"submitted",{})})}
+    else if(action==="approved"){const ac=route.accounting||[];if(ac.length===0)return;let att=[];try{const fs=await getAttachments(expenseId);for(const f of fs){try{const{base64,contentType}=await getAttachmentBase64(f.id);att.push({name:f.name,contentType,base64})}catch(e){}}}catch(e){}await sendEmail({to:ac,subject:`[Approved \u2014 Process] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"approved",{approverName,powerAutomateUrl:settings?.powerAutomateUrl||"",expenseId}),attachments:att})}
+    else if(action==="rejected"){if(!expense.SubmittedBy)return;await sendEmail({to:expense.SubmittedBy,subject:`[Expense Rejected] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)}`,htmlBody:buildExpenseEmailHtml(expense,"rejected",{approverName,rejectionNotes})})}
+    else if(action==="processed"){const a=route.approvers||[];if(a.length===0)return;await sendEmail({to:a,subject:`[Processed] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"processed",{})})}
+    else if(action==="pending_payment"){const a=route.approvers||[];if(a.length===0)return;await sendEmail({to:a,subject:`[Pending Payment] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"pending_payment",{})})}
+  }catch(e){console.error("Email notification failed:",e)}
 }
 
 // ============================================================
@@ -389,7 +455,7 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel}){
         ExpenseType:expType,
         ExpenseDate:date+"T00:00:00Z",
         Description:description||`${expType} - ${vendor||""}`.trim(),
-        Vendor:vendor,
+        Vendor:isMileage?"":vendor,
         Status:"Submitted",
         SubmittedBy:userEmail,
         SubmittedByName:getUserName()||userEmail,
@@ -435,7 +501,7 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel}){
         }
       }
 
-      onSubmit&&onSubmit();
+      onSubmit&&onSubmit({fields,expenseId:newId});
     }catch(e){
       setError("Submit failed: "+e.message);
     }finally{setSubmitting(false)}
@@ -464,9 +530,9 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel}){
 
     {expType&&<>
       {/* Common fields */}
-      <div style={{display:"grid",gridTemplateColumns:isCC?"1fr 1fr 1fr":"1fr 1fr",gap:"8px"}}>
+      <div style={{display:"grid",gridTemplateColumns:isCC?"1fr 1fr 1fr":isMileage?"1fr":"1fr 1fr",gap:"8px"}}>
         <F label="Date" required><Inp type="date" value={date} onChange={e=>setDate(e.target.value)}/></F>
-        <F label="Vendor / Payee"><Inp value={vendor} onChange={e=>setVendor(e.target.value)} placeholder="e.g. Home Depot, Shell"/></F>
+        {!isMileage&&<F label="Vendor / Payee"><Inp value={vendor} onChange={e=>setVendor(e.target.value)} placeholder="e.g. Home Depot, Shell"/></F>}
         {isCC&&<F label="Card Last 4" required><Inp value={ccLast4} onChange={e=>setCcLast4(e.target.value.replace(/\D/g,"").slice(0,4))} placeholder="1234" maxLength={4}/></F>}
       </div>
       {isCC&&<F label="Charge Date"><Inp type="date" value={ccDate} onChange={e=>setCcDate(e.target.value)}/></F>}
@@ -570,8 +636,8 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel}){
         <Txt value={description} onChange={e=>setDescription(e.target.value)} placeholder="Additional details..." rows={2}/>
       </F>
 
-      {/* ── ATTACHMENTS ── */}
-      <div style={{marginTop:"8px"}}>
+      {/* ── ATTACHMENTS (hidden for Mileage) ── */}
+      {!isMileage&&<div style={{marginTop:"8px"}}>
         <label style={lCss}>Attachments ({files.length}/5)</label>
         <div style={{display:"flex",gap:"6px",marginTop:"4px"}}>
           <input ref={fileRef} type="file" accept="image/*,.pdf" multiple hidden onChange={e=>handleFiles(e.target.files)}/>
@@ -588,7 +654,7 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel}){
             </div>
           ))}
         </div>}
-      </div>
+      </div>}
 
       {/* Submit */}
       <div style={{display:"flex",justifyContent:"flex-end",gap:"8px",marginTop:"16px",borderTop:`1px solid ${B.teal600}`,paddingTop:"12px"}}>
@@ -605,7 +671,7 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel}){
 function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,actionLoading}){
   const filtered=filter?expenses.filter(filter):expenses;
   if(filtered.length===0)return <Card style={{marginBottom:"8px"}}><div style={{fontSize:"11px",color:B.teal400,textAlign:"center",padding:"8px"}}>{title}: None</div></Card>;
-
+  const isCC=(exp)=>exp.ExpenseType==="Credit Card Reconciliation";
   return <Card style={{marginBottom:"8px"}}>
     <h4 style={{fontSize:"11px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"0.8px",marginBottom:"8px"}}>{title} ({filtered.length})</h4>
     {filtered.map(exp=>(
@@ -617,18 +683,26 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,a
             <StatusBadge status={exp.Status}/>
             <span style={{fontSize:"12px",fontWeight:700,color:B.text}}>{exp.SubmittedByName||exp.SubmittedBy}</span>
             <span style={{fontSize:"11px",color:B.teal300}}>{exp.ExpenseType}</span>
-            {exp.Vendor&&<span style={{fontSize:"10px",color:B.teal400}}>• {exp.Vendor}</span>}
+            {exp.Vendor&&<span style={{fontSize:"10px",color:B.teal400}}>{"\u2022"} {exp.Vendor}</span>}
           </div>
           <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
             <span style={{fontSize:"13px",fontWeight:800,color:B.gold}}>{fmtMoney(exp.Amount)}</span>
             <span style={{fontSize:"10px",color:B.teal400}}>{fmtDate(exp.ExpenseDate)}</span>
-            {/* Action buttons based on role */}
-            {userRole==="admin"&&exp.Status==="Submitted"&&<>
-              <Btn v="small" style={{background:B.ok,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"approve")}} disabled={actionLoading}>✓</Btn>
-              <Btn v="small" style={{background:B.no,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"reject")}} disabled={actionLoading}>✗</Btn>
+            {/* Any admin can approve/reject */}
+            {userRole==="admin"&&exp.Status==="Submitted"&&onAction&&<>
+              <Btn v="small" style={{background:B.ok,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"approve")}} disabled={actionLoading}>{"\u2713"}</Btn>
+              <Btn v="small" style={{background:B.no,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();const n=prompt("Rejection reason (optional):");if(n!==null)onAction(exp.id,"reject",n)}} disabled={actionLoading}>{"\u2717"}</Btn>
             </>}
-            {userRole==="accounting"&&exp.Status==="Approved"&&
-              <Btn v="small" style={{background:B.ok,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"process")}} disabled={actionLoading}>$ Process</Btn>
+            {/* Process: CC→Processed, Reimb/Mileage→Pending Payment */}
+            {userRole==="admin"&&exp.Status==="Approved"&&onAction&&
+              <Btn v="small" style={{background:"#6A8EC8",color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"process")}} disabled={actionLoading}>{isCC(exp)?"$ Processed":"$ Pend Pmt"}</Btn>
+            }
+            {userRole==="accounting"&&exp.Status==="Approved"&&onAction&&
+              <Btn v="small" style={{background:B.ok,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"process")}} disabled={actionLoading}>{isCC(exp)?"$ Processed":"$ Pend Pmt"}</Btn>
+            }
+            {/* Mark Pending Payment as Paid */}
+            {userRole==="admin"&&exp.Status==="Pending Payment"&&onAction&&
+              <Btn v="small" style={{background:B.ok,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"paid")}} disabled={actionLoading}>{"\u2713"} Paid</Btn>
             }
           </div>
         </div>
@@ -641,63 +715,116 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,a
 // DASHBOARD COMPONENT
 // ============================================================
 function Dashboard({expenses}){
+  const[activeKpi,setActiveKpi]=useState(null);
   const submitted=expenses.filter(e=>e.Status==="Submitted");
   const approved=expenses.filter(e=>e.Status==="Approved");
+  const pendingPmt=expenses.filter(e=>e.Status==="Pending Payment");
   const processed=expenses.filter(e=>e.Status==="Processed");
+  const paid=expenses.filter(e=>e.Status==="Paid");
   const rejected=expenses.filter(e=>e.Status==="Rejected");
   const total=expenses.reduce((t,e)=>t+(e.Amount||0),0);
   const totalTips=expenses.reduce((t,e)=>t+(e.Tip||0),0);
   const totalTax=expenses.reduce((t,e)=>t+(e.Tax||0),0);
 
-  // By category
-  const byCat={};expenses.forEach(e=>{const c=e.Category||"Other";byCat[c]=(byCat[c]||0)+(e.Amount||0)});
+  // By expense type
+  const byType={};expenses.forEach(e=>{const t=e.ExpenseType||"Other";byType[t]=(byType[t]||0)+(e.Amount||0)});
+  const typeEntries=Object.entries(byType).sort((a,b)=>b[1]-a[1]);
+
+  // By category (Mileage as its own)
+  const byCat={};expenses.forEach(e=>{const c=e.ExpenseType==="Mileage"?"Mileage":(e.Category||"Other");byCat[c]=(byCat[c]||0)+(e.Amount||0)});
   const catEntries=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
 
-  const kpi=(label,value,sub,color)=>(
-    <div style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"6px",padding:"10px",textAlign:"center"}}>
-      <div style={{fontSize:"18px",fontWeight:900,color:color||B.gold}}>{value}</div>
-      <div style={{fontSize:"9px",fontWeight:700,color:B.teal300,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:"2px"}}>{label}</div>
-      {sub&&<div style={{fontSize:"9px",color:B.teal400,marginTop:"2px"}}>{sub}</div>}
-    </div>
-  );
+  const typeColors={"Personal Reimbursement":"#CDA04B","Mileage":"#3DA06B","Credit Card Reconciliation":"#6A8EC8"};
+  const catColors=["#CDA04B","#3DA06B","#6A8EC8","#D35B4B","#9E7B2F","#6FA0B0","#A3C5D0","#4A7E91","#E8CC7A","#D0E1E8"];
+
+  const kpiDefs=[
+    {id:"total",label:"Total",value:fmtMoney(total),sub:`${expenses.length} expenses`,color:B.gold,filter:()=>expenses},
+    {id:"pending",label:"Pending",value:submitted.length,sub:fmtMoney(submitted.reduce((t,e)=>t+(e.Amount||0),0)),color:B.goldDim,filter:()=>submitted},
+    {id:"approved",label:"Approved",value:approved.length,color:B.ok,filter:()=>approved},
+    {id:"pending_pmt",label:"Pending Pmt",value:pendingPmt.length,sub:fmtMoney(pendingPmt.reduce((t,e)=>t+(e.Amount||0),0)),color:"#6A8EC8",filter:()=>pendingPmt},
+    {id:"processed",label:"Processed",value:processed.length,color:"#6A8EC8",filter:()=>processed},
+    {id:"paid",label:"Paid",value:paid.length,color:B.ok,filter:()=>paid},
+    {id:"rejected",label:"Rejected",value:rejected.length,color:B.no,filter:()=>rejected},
+  ];
+  if(totalTips>0)kpiDefs.push({id:"tips",label:"Tips",value:fmtMoney(totalTips),sub:`${expenses.filter(e=>e.Tip>0).length} expense(s)`,color:"#9E7B2F",filter:()=>expenses.filter(e=>e.Tip>0)});
+  if(totalTax>0)kpiDefs.push({id:"tax",label:"Tax Paid",value:fmtMoney(totalTax),color:"#6B7A7A",filter:()=>expenses.filter(e=>e.Tax>0)});
+
+  const activeFilter=kpiDefs.find(k=>k.id===activeKpi);
+  const filteredExpenses=activeFilter?activeFilter.filter():[];
+
+  const barChart=(entries,colors,label)=>{
+    const max=entries.length>0?Math.max(...entries.map(e=>e[1])):1;
+    return<div style={{marginBottom:"16px"}}>
+      <h4 style={{fontSize:"11px",fontWeight:800,color:B.teal200,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"8px"}}>{label}</h4>
+      {entries.map(([name,amt],i)=>{
+        const pct=max>0?Math.round(amt/max*100):0;
+        const totalPct=total>0?Math.round(amt/total*100):0;
+        const c=typeof colors==="object"&&!Array.isArray(colors)?colors[name]:colors[i%colors.length];
+        return<div key={name} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}}>
+          <span style={{fontSize:"11px",color:B.teal200,width:"160px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</span>
+          <div style={{flex:1,height:"8px",background:B.teal800,borderRadius:"4px",overflow:"hidden"}}>
+            <div style={{width:pct+"%",height:"100%",background:c,borderRadius:"4px",transition:"width 0.3s"}}/>
+          </div>
+          <span style={{fontSize:"10px",color:B.teal300,width:"70px",textAlign:"right"}}>{fmtMoney(amt)}</span>
+          <span style={{fontSize:"9px",color:B.teal400,width:"30px",textAlign:"right"}}>{totalPct}%</span>
+        </div>
+      })}
+    </div>;
+  };
 
   return <Card>
     <h3 style={{fontSize:"14px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"1px",marginBottom:"12px"}}>Dashboard</h3>
+
+    {/* KPIs — clickable */}
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:"8px",marginBottom:"16px"}}>
-      {kpi("Total",fmtMoney(total),`${expenses.length} expenses`)}
-      {kpi("Pending",submitted.length,fmtMoney(submitted.reduce((t,e)=>t+(e.Amount||0),0)),B.goldDim)}
-      {kpi("Approved",approved.length,null,B.ok)}
-      {kpi("Processed",processed.length,null,"#6A8EC8")}
-      {kpi("Rejected",rejected.length,null,B.no)}
-      {totalTips>0&&kpi("Tips",fmtMoney(totalTips),`${expenses.filter(e=>e.Tip>0).length} expense(s)`,"#9E7B2F")}
-      {totalTax>0&&kpi("Tax Paid",fmtMoney(totalTax),null,"#6B7A7A")}
+      {kpiDefs.map(k=>(
+        <div key={k.id} onClick={()=>setActiveKpi(activeKpi===k.id?null:k.id)}
+          style={{background:activeKpi===k.id?"rgba(205,160,75,0.1)":B.teal900,border:`1px solid ${activeKpi===k.id?B.gold:B.teal600}`,borderRadius:"6px",padding:"10px",textAlign:"center",cursor:"pointer",transition:"all 0.15s"}}>
+          <div style={{fontSize:"18px",fontWeight:900,color:k.color||B.gold}}>{k.value}</div>
+          <div style={{fontSize:"9px",fontWeight:700,color:B.teal300,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:"2px"}}>{k.label}</div>
+          {k.sub&&<div style={{fontSize:"9px",color:B.teal400,marginTop:"2px"}}>{k.sub}</div>}
+        </div>
+      ))}
     </div>
 
-    {catEntries.length>0&&<>
-      <h4 style={{fontSize:"11px",fontWeight:800,color:B.teal200,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"6px"}}>By Category</h4>
-      {catEntries.slice(0,8).map(([cat,amt])=>{
-        const pct=total>0?Math.round(amt/total*100):0;
-        return <div key={cat} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"4px"}}>
-          <span style={{fontSize:"11px",color:B.teal200,width:"140px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cat}</span>
-          <div style={{flex:1,height:"6px",background:B.teal800,borderRadius:"3px",overflow:"hidden"}}>
-            <div style={{width:pct+"%",height:"100%",background:B.gold,borderRadius:"3px"}}/>
+    {/* Filtered list when KPI clicked */}
+    {activeKpi&&filteredExpenses.length>0&&<div style={{background:B.teal900,border:`1px solid ${B.gold}`,borderRadius:"6px",padding:"10px",marginBottom:"16px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
+        <span style={{fontSize:"10px",fontWeight:700,color:B.gold,textTransform:"uppercase"}}>{activeFilter.label} ({filteredExpenses.length})</span>
+        <button onClick={()=>setActiveKpi(null)} style={{background:"none",border:"none",color:B.teal400,cursor:"pointer",fontSize:"12px"}}>{"\u00d7"} Close</button>
+      </div>
+      {filteredExpenses.map(exp=>(
+        <div key={exp.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${B.teal600}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+            <StatusBadge status={exp.Status}/>
+            <span style={{fontSize:"11px",color:B.text}}>{exp.SubmittedByName||exp.SubmittedBy}</span>
+            <span style={{fontSize:"10px",color:B.teal400}}>{exp.ExpenseType}</span>
           </div>
-          <span style={{fontSize:"10px",color:B.teal300,width:"60px",textAlign:"right"}}>{fmtMoney(amt)}</span>
-        </div>;
-      })}
-    </>}
+          <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+            <span style={{fontSize:"12px",fontWeight:700,color:B.gold}}>{fmtMoney(exp.Amount)}</span>
+            <span style={{fontSize:"10px",color:B.teal400}}>{fmtDate(exp.ExpenseDate)}</span>
+          </div>
+        </div>
+      ))}
+    </div>}
+
+    {/* Charts */}
+    {typeEntries.length>0&&barChart(typeEntries,typeColors,"By Expense Type")}
+    {catEntries.length>0&&barChart(catEntries,catColors,"By Category")}
   </Card>;
 }
 
 // ============================================================
 // ADMIN PANEL COMPONENT
 // ============================================================
-function AdminPanel({settings,users,onSave,saving}){
+function AdminPanel({settings,users,routing,onSave,saving}){
   const[s,setS]=useState({...DEFAULT_SETTINGS,...settings});
   const[u,setU]=useState([...(users||DEFAULT_USERS)]);
+  const[r,setR]=useState(JSON.parse(JSON.stringify(routing||DEFAULT_ROUTING)));
   const[newCat,setNewCat]=useState("");
   const[newProp,setNewProp]=useState("");
   const[newUser,setNewUser]=useState({email:"",name:"",role:"employee",homeOffice:""});
+  const[newExtEmail,setNewExtEmail]=useState({type:"",email:""});
 
   const addCat=()=>{if(newCat.trim()&&!s.categories.includes(newCat.trim())){setS({...s,categories:[...s.categories,newCat.trim()]});setNewCat("")}};
   const removeCat=(c)=>setS({...s,categories:s.categories.filter(x=>x!==c)});
@@ -708,6 +835,30 @@ function AdminPanel({settings,users,onSave,saving}){
   const updateUserRole=(email,role)=>setU(u.map(x=>x.email===email?{...x,role}:x));
   const updateUserHome=(email,homeOffice)=>setU(u.map(x=>x.email===email?{...x,homeOffice}:x));
 
+  // Routing toggles
+  const adminEmails=u.filter(x=>x.role==="admin").map(x=>x.email);
+  const accountingEmails=u.filter(x=>x.role==="accounting").map(x=>x.email);
+  const toggleRouting=(expType,field,email)=>{
+    const nr={...r};
+    if(!nr[expType])nr[expType]={approvers:[],accounting:[]};
+    const arr=nr[expType][field]||[];
+    if(arr.includes(email)){nr[expType][field]=arr.filter(e=>e!==email)}else{nr[expType][field]=[...arr,email]}
+    setR(nr);
+  };
+  const addExternalAccounting=(expType,email)=>{
+    if(!email||!email.includes("@"))return;
+    const nr={...r};if(!nr[expType])nr[expType]={approvers:[],accounting:[]};
+    if(!nr[expType].accounting.includes(email)){nr[expType].accounting=[...nr[expType].accounting,email]}
+    setR(nr);
+  };
+  const removeExternalAccounting=(expType,email)=>{
+    const nr={...r};if(!nr[expType])return;
+    nr[expType].accounting=(nr[expType].accounting||[]).filter(e=>e!==email);
+    setR(nr);
+  };
+
+  const expTypes=s.expenseTypes||DEFAULT_EXPENSE_TYPES;
+
   return <Card>
     <h3 style={{fontSize:"14px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"1px",marginBottom:"12px"}}>Admin Settings</h3>
 
@@ -715,6 +866,13 @@ function AdminPanel({settings,users,onSave,saving}){
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"16px"}}>
       <F label="Mileage Rate ($/mile)"><Inp type="number" value={s.mileageRate} onChange={e=>setS({...s,mileageRate:parseFloat(e.target.value)||0})} step="0.01"/></F>
       <F label="Rate Year"><Inp value={s.mileageRateYear} onChange={e=>setS({...s,mileageRateYear:e.target.value})}/></F>
+    </div>
+
+    {/* Power Automate URL */}
+    <div style={{marginBottom:"16px"}}>
+      <F label="Power Automate Webhook URL (for accounting action buttons)">
+        <Inp value={s.powerAutomateUrl||""} onChange={e=>setS({...s,powerAutomateUrl:e.target.value})} placeholder="https://prod-XX.westus.logic.azure.com/workflows/..."/>
+      </F>
     </div>
 
     {/* Categories */}
@@ -765,8 +923,62 @@ function AdminPanel({settings,users,onSave,saving}){
       </div>
     </div>
 
+    {/* Email Routing Matrix */}
+    <div style={{marginBottom:"16px",borderTop:`1px solid ${B.teal600}`,paddingTop:"12px"}}>
+      <label style={lCss}>Email Routing Matrix</label>
+      <div style={{fontSize:"10px",color:B.teal400,marginBottom:"10px"}}>Routing controls email notifications only. All admins can see and act on all expenses in the approval queue.</div>
+      {expTypes.map(et=>{
+        const route=r[et]||{approvers:[],accounting:[]};
+        const externalAcct=(route.accounting||[]).filter(e=>![...adminEmails,...accountingEmails].includes(e));
+        return <div key={et} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"6px",padding:"10px",marginBottom:"8px"}}>
+          <div style={{fontSize:"12px",fontWeight:800,color:B.text,marginBottom:"8px"}}>{et}</div>
+
+          {/* Approvers (notify on submit) */}
+          <div style={{marginBottom:"6px"}}>
+            <span style={{fontSize:"9px",fontWeight:700,color:B.teal300,textTransform:"uppercase",letterSpacing:"0.5px"}}>Notify on Submit</span>
+            <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"4px"}}>
+              {adminEmails.map(email=>{
+                const active=(route.approvers||[]).includes(email);
+                const name=(u.find(x=>x.email===email)||{}).name||email;
+                return <button key={email} onClick={()=>toggleRouting(et,"approvers",email)} style={{
+                  background:active?"rgba(61,160,107,0.15)":"transparent",border:`1px solid ${active?B.ok:B.teal600}`,
+                  borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:active?B.ok:B.teal400,cursor:"pointer",fontFamily:fb
+                }}>{active?"\u2713 ":""}{name}</button>;
+              })}
+            </div>
+          </div>
+
+          {/* Accounting (notify on approve, with attachments) */}
+          <div>
+            <span style={{fontSize:"9px",fontWeight:700,color:B.teal300,textTransform:"uppercase",letterSpacing:"0.5px"}}>Notify on Approve (Accounting)</span>
+            <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginTop:"4px"}}>
+              {accountingEmails.map(email=>{
+                const active=(route.accounting||[]).includes(email);
+                const name=(u.find(x=>x.email===email)||{}).name||email;
+                return <button key={email} onClick={()=>toggleRouting(et,"accounting",email)} style={{
+                  background:active?"rgba(106,142,200,0.15)":"transparent",border:`1px solid ${active?"#6A8EC8":B.teal600}`,
+                  borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:active?"#6A8EC8":B.teal400,cursor:"pointer",fontFamily:fb
+                }}>{active?"\u2713 ":""}{name}</button>;
+              })}
+              {externalAcct.map(email=>(
+                <span key={email} style={{background:"rgba(106,142,200,0.15)",border:"1px solid #6A8EC8",borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:"#6A8EC8",display:"flex",alignItems:"center",gap:"4px"}}>
+                  {email}<button onClick={()=>removeExternalAccounting(et,email)} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"11px"}}>×</button>
+                </span>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:"4px",marginTop:"4px"}}>
+              <Inp value={newExtEmail.type===et?newExtEmail.email:""} onChange={e=>setNewExtEmail({type:et,email:e.target.value})}
+                placeholder="External email (e.g. bookkeeper@...)" style={{flex:1,fontSize:"10px"}}
+                onKeyDown={e=>{if(e.key==="Enter"){addExternalAccounting(et,newExtEmail.email);setNewExtEmail({type:"",email:""})}}}/>
+              <Btn v="small" onClick={()=>{addExternalAccounting(et,newExtEmail.email);setNewExtEmail({type:"",email:""})}}>+</Btn>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>
+
     <div style={{borderTop:`1px solid ${B.teal600}`,paddingTop:"12px",display:"flex",justifyContent:"flex-end"}}>
-      <Btn onClick={()=>onSave(s,u)} disabled={saving}>{saving?"Saving...":"Save Settings"}</Btn>
+      <Btn onClick={()=>onSave(s,u,r)} disabled={saving}>{saving?"Saving...":"Save Settings"}</Btn>
     </div>
   </Card>;
 }
@@ -781,6 +993,7 @@ function ExpenseManager(){
   const[userName,setUserName]=useState(null);
   const[settings,setSettings]=useState(DEFAULT_SETTINGS);
   const[users,setUsers]=useState(DEFAULT_USERS);
+  const[routing,setRouting]=useState(DEFAULT_ROUTING);
   const[expenses,setExpenses]=useState([]);
   const[loading,setLoading]=useState(true);
   const[tab,setTab]=useState("submit");
@@ -823,6 +1036,7 @@ function ExpenseManager(){
         const[cfg,exps]=await Promise.all([loadConfig(),loadExpenses()]);
         setSettings(cfg.settings||DEFAULT_SETTINGS);
         setUsers(cfg.users||DEFAULT_USERS);
+        setRouting(cfg.routing||DEFAULT_ROUTING);
         setExpenses(exps);
       }catch(e){
         console.error("Load error:",e);
@@ -844,17 +1058,40 @@ function ExpenseManager(){
     setActionLoading(true);
     try{
       const fields={};
+      const expense=expenses.find(e=>e.id===itemId);
+      const isCC=expense?.ExpenseType==="Credit Card Reconciliation";
+
       if(action==="approve"){
         fields.Status="Approved";fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
       }else if(action==="reject"){
         fields.Status="Rejected";fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
         if(notes)fields.RejectionNotes=notes;
       }else if(action==="process"){
-        fields.Status="Processed";fields.ProcessedBy=userEmail;fields.ProcessedDate=new Date().toISOString();
+        // CC → Processed, Reimb/Mileage → Pending Payment
+        if(isCC){
+          fields.Status="Processed";fields.ProcessedBy=userEmail;fields.ProcessedDate=new Date().toISOString();
+        }else{
+          fields.Status="Pending Payment";fields.ProcessedBy=userEmail;fields.ProcessedDate=new Date().toISOString();
+        }
+      }else if(action==="paid"){
+        fields.Status="Paid";fields.PaidDate=new Date().toISOString();
       }
       await updateExpense(itemId,fields);
+
+      // Send email notifications (fire-and-forget)
+      if(expense){
+        const emailAction=action==="process"?(isCC?"processed":"pending_payment"):action;
+        if(emailAction!=="paid"){
+          sendNotificationEmail({...expense,...fields},emailAction,{
+            routing:routing||DEFAULT_ROUTING,settings,users,
+            approverName:getUserName()||userEmail,
+            rejectionNotes:notes,expenseId:itemId.toString()
+          }).catch(e=>console.warn("Email notification error:",e));
+        }
+      }
+
       await refresh();
-      setToast({message:`Expense ${action}d successfully`,type:"success"});
+      setToast({message:`Expense ${action==="process"?(isCC?"processed":"moved to pending payment"):action==="paid"?"marked as paid":action+"d"} successfully`,type:"success"});
       setViewExpense(null);
     }catch(e){
       setToast({message:`Action failed: ${e.message}`,type:"error"});
@@ -862,11 +1099,11 @@ function ExpenseManager(){
   };
 
   // Admin save
-  const handleAdminSave=async(newSettings,newUsers)=>{
+  const handleAdminSave=async(newSettings,newUsers,newRouting)=>{
     setAdminSaving(true);
     try{
-      await saveConfig({settings:newSettings,users:newUsers});
-      setSettings(newSettings);setUsers(newUsers);
+      await saveConfig({settings:newSettings,users:newUsers,routing:newRouting||routing});
+      setSettings(newSettings);setUsers(newUsers);if(newRouting)setRouting(newRouting);
       setToast({message:"Settings saved",type:"success"});
     }catch(e){
       setToast({message:"Save failed: "+e.message,type:"error"});
@@ -923,7 +1160,11 @@ function ExpenseManager(){
     <div style={{maxWidth:"1000px",margin:"16px auto",padding:"0 16px"}}>
       {loading?<Card><div style={{textAlign:"center",color:B.teal300,padding:"20px"}}>Loading expenses...</div></Card>:<>
 
-        {tab==="submit"&&<ExpenseForm settings={settings} users={users} userEmail={userEmail} onSubmit={async()=>{
+        {tab==="submit"&&<ExpenseForm settings={settings} users={users} userEmail={userEmail} onSubmit={async({fields,expenseId})=>{
+          // Fire submit notification
+          sendNotificationEmail(fields,"submitted",{
+            routing:routing||DEFAULT_ROUTING,settings,users,expenseId:expenseId?.toString()
+          }).catch(e=>console.warn("Submit email error:",e));
           await refresh();setTab("my");setToast({message:"Expense submitted!",type:"success"});
         }}/>}
 
@@ -934,20 +1175,26 @@ function ExpenseManager(){
         {tab==="queue"&&isAdmin&&<>
           <ExpenseList expenses={expenses} title="Pending Approval" filter={e=>e.Status==="Submitted"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} actionLoading={actionLoading}/>
-          <ExpenseList expenses={expenses} title="Recently Reviewed" filter={e=>["Approved","Rejected"].includes(e.Status)}
+          <ExpenseList expenses={expenses} title="Approved — Awaiting Processing" filter={e=>e.Status==="Approved"}
+            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} actionLoading={actionLoading}/>
+          <ExpenseList expenses={expenses} title="Pending Payment" filter={e=>e.Status==="Pending Payment"}
+            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} actionLoading={actionLoading}/>
+          <ExpenseList expenses={expenses} title="Recently Completed" filter={e=>["Processed","Paid","Rejected"].includes(e.Status)}
             userRole={userRole} userEmail={userEmail} onView={setViewExpense}/>
         </>}
 
         {tab==="queue"&&isAccounting&&<>
           <ExpenseList expenses={expenses} title="Ready to Process" filter={e=>e.Status==="Approved"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} actionLoading={actionLoading}/>
-          <ExpenseList expenses={expenses} title="Processed" filter={e=>e.Status==="Processed"}
+          <ExpenseList expenses={expenses} title="Pending Payment" filter={e=>e.Status==="Pending Payment"}
+            userRole={userRole} userEmail={userEmail} onView={setViewExpense}/>
+          <ExpenseList expenses={expenses} title="Completed" filter={e=>["Processed","Paid"].includes(e.Status)}
             userRole={userRole} userEmail={userEmail} onView={setViewExpense}/>
         </>}
 
         {tab==="dashboard"&&<Dashboard expenses={expenses}/>}
 
-        {tab==="admin"&&isAdmin&&<AdminPanel settings={settings} users={users} onSave={handleAdminSave} saving={adminSaving}/>}
+        {tab==="admin"&&isAdmin&&<AdminPanel settings={settings} users={users} routing={routing} onSave={handleAdminSave} saving={adminSaving}/>}
       </>}
     </div>
 
