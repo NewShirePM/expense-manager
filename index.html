@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NewShire Expense Manager</title>
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700;800;900&family=Source+Code+Pro:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Source Sans 3','Segoe UI',sans-serif;background:#1C3740;color:#E8ECEE}
+#root{min-height:100vh}
+input,select,textarea,button{font-family:inherit}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:#15292F}
+::-webkit-scrollbar-thumb{background:#3D6B7B;border-radius:3px}
+::placeholder{color:#5A8A9A}
+@media print{body{background:#fff!important}.no-print{display:none!important}}
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script crossorigin src="https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-type="module">
+const{useState,useEffect,useCallback,useRef,useMemo}=React;
+
+// ============================================================
+// CONFIGURATION
+// ============================================================
+const CONFIG={
+  clientId:"32e75ffa-747a-4cf0-8209-6a19150c4547",
+  tenantId:"33575d04-ca7b-4396-8011-9eaea4030b46",
+  siteId:"vanrockre.sharepoint.com,a02c1cd8-9f1f-4827-8286-7b6b7ce74232,01202419-6625-4499-b0d5-8ceb1cffdba3",
+  listName:"Expense Log",
+  configListName:"Expense Config",
+  googleMapsKey:"AIzaSyCgm0GDTAcsYUJtTVrZLR3xS8sazfqXxSY",
+  version:"1.0.0",
+};
+const GRAPH="https://graph.microsoft.com/v1.0";
+
+// ============================================================
+// CONSTANTS
+// ============================================================
+const ROLES={ADMIN:"admin",ACCOUNTING:"accounting",EMPLOYEE:"employee"};
+const ROLE_LABELS={admin:"Admin",accounting:"Accounting",employee:"Employee"};
+const STATUS={DRAFT:"Draft",SUBMITTED:"Submitted",APPROVED:"Approved",REJECTED:"Rejected",PROCESSED:"Processed"};
+const STATUS_COLORS={Draft:"#6FA0B0",Submitted:"#CDA04B",Approved:"#3DA06B",Rejected:"#D35B4B",Processed:"#6A8EC8"};
+
+const DEFAULT_CATEGORIES=["Office Supplies","Travel","Meals/Entertainment","Software/Subscriptions","Maintenance/Repairs","Marketing","Professional Development","Vehicle/Fuel","Other"];
+const DEFAULT_EXPENSE_TYPES=["Personal Reimbursement","Mileage","Credit Card Reconciliation"];
+const DEFAULT_PROPERTIES=["Fusion Pointe","Townes at Converse","Liberty Square","City View","Villas at Oakwood","701 East Main","Arlington Townes","Hampton Avenue","The Orchard","Single Family"];
+
+const DEFAULT_USERS=[
+  {email:"bturner@newshirepm.com",name:"Brandy Turner",role:"admin",homeOffice:"130 Milestone Way, Greenville, SC"},
+  {email:"cmunson@newshirepm.com",name:"C. Munson",role:"admin",homeOffice:""},
+  {email:"jwhite@vanrockre.com",name:"J. White",role:"admin",homeOffice:""},
+];
+
+const DEFAULT_SETTINGS={
+  mileageRate:0.70,
+  mileageRateYear:"2025",
+  categories:DEFAULT_CATEGORIES,
+  expenseTypes:DEFAULT_EXPENSE_TYPES,
+  properties:DEFAULT_PROPERTIES,
+};
+
+// ============================================================
+// BRAND TOKENS
+// ============================================================
+const B={
+  bg:"#1C3740",card:"#1E3A44",cardAlt:"#1A3440",
+  teal900:"#15292F",teal800:"#1A3440",teal700:"#1E3A44",teal600:"#2A5262",teal500:"#3D6B7B",teal400:"#4A7E91",teal300:"#6FA0B0",teal200:"#A3C5D0",teal100:"#D0E1E8",
+  gold:"#CDA04B",goldLight:"#E8CC7A",goldDim:"#9E7B2F",
+  text:"#E8ECEE",textMuted:"#8BA8B4",textDim:"#5A8A9A",
+  ok:"#3DA06B",no:"#D35B4B",white:"#FFFFFF",
+  border:"#2A5262",inputBg:"#15292F",inputBorder:"#2A5262",
+};
+const fb="'Source Sans 3','Segoe UI',sans-serif";
+
+// ============================================================
+// HELPERS
+// ============================================================
+function localToday(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+function fmtDate(iso){if(!iso)return"—";const d=new Date(iso);return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+function fmtMoney(v){if(v==null||isNaN(v))return"$0.00";return"$"+Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+
+// ============================================================
+// MSAL AUTH
+// ============================================================
+const msalConfig={auth:{clientId:CONFIG.clientId,authority:`https://login.microsoftonline.com/${CONFIG.tenantId}`,redirectUri:window.location.origin+window.location.pathname},cache:{cacheLocation:"sessionStorage"}};
+let msalInstance=null;
+try{msalInstance=new msal.PublicClientApplication(msalConfig)}catch(e){console.error("MSAL init failed:",e)}
+
+async function getToken(scopes=["https://graph.microsoft.com/.default"]){
+  if(!msalInstance)throw new Error("MSAL not initialized");
+  const accounts=msalInstance.getAllAccounts();
+  if(accounts.length===0){const resp=await msalInstance.loginPopup({scopes});return resp.accessToken}
+  try{const resp=await msalInstance.acquireTokenSilent({scopes,account:accounts[0]});return resp.accessToken}
+  catch(e){const resp=await msalInstance.loginPopup({scopes});return resp.accessToken}
+}
+
+function getUserEmail(){
+  if(!msalInstance)return null;
+  const accounts=msalInstance.getAllAccounts();
+  return accounts.length>0?(accounts[0].username||accounts[0].idTokenClaims?.preferred_username||"").toLowerCase():null;
+}
+
+function getUserName(){
+  if(!msalInstance)return null;
+  const accounts=msalInstance.getAllAccounts();
+  return accounts.length>0?(accounts[0].name||accounts[0].username||""):null;
+}
+
+// ============================================================
+// SHAREPOINT API HELPERS
+// ============================================================
+async function spGet(url){
+  const token=await getToken();
+  const r=await fetch(url,{headers:{Authorization:`Bearer ${token}`,"Accept":"application/json"}});
+  if(!r.ok)throw new Error(`SP GET ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+async function spPost(url,body){
+  const token=await getToken();
+  const r=await fetch(url,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error(`SP POST ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+async function spPatch(url,body){
+  const token=await getToken();
+  const r=await fetch(url,{method:"PATCH",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error(`SP PATCH ${r.status}: ${await r.text()}`);
+  return r.status===204?{}:r.json();
+}
+
+// List item helpers
+const listUrl=(listName)=>`${GRAPH}/sites/${CONFIG.siteId}/lists/${listName}`;
+
+async function getListItems(listName,select,expand,filter,top=500){
+  let url=`${listUrl(listName)}/items?$top=${top}`;
+  if(select)url+=`&$select=${select}`;
+  if(expand)url+=`&$expand=${expand}`;
+  if(filter)url+=`&$filter=${filter}`;
+  const data=await spGet(url);
+  return data.value||[];
+}
+
+async function createListItem(listName,fields){
+  return spPost(`${listUrl(listName)}/items`,{fields});
+}
+
+async function updateListItem(listName,itemId,fields){
+  return spPatch(`${listUrl(listName)}/items/${itemId}/fields`,fields);
+}
+
+// Config helpers — store JSON blob in a single list item
+async function loadConfig(){
+  try{
+    const items=await getListItems(CONFIG.configListName,"id,fields","fields",null,1);
+    if(items.length>0&&items[0].fields?.ConfigJSON){
+      return JSON.parse(items[0].fields.ConfigJSON);
+    }
+  }catch(e){console.warn("Config load failed, using defaults:",e)}
+  return{settings:DEFAULT_SETTINGS,users:DEFAULT_USERS};
+}
+
+async function saveConfig(config){
+  const items=await getListItems(CONFIG.configListName,"id,fields","fields",null,1);
+  const json=JSON.stringify(config);
+  if(items.length>0){
+    await updateListItem(CONFIG.configListName,items[0].id,{ConfigJSON:json});
+  }else{
+    await createListItem(CONFIG.configListName,{Title:"Config",ConfigJSON:json});
+  }
+}
+
+// Expense helpers
+async function loadExpenses(){
+  const items=await getListItems(CONFIG.listName,"id,fields","fields");
+  return items.map(i=>({id:i.id,...i.fields}));
+}
+
+async function createExpense(fields){
+  return createListItem(CONFIG.listName,fields);
+}
+
+async function updateExpense(itemId,fields){
+  return updateListItem(CONFIG.listName,itemId,fields);
+}
+
+// ============================================================
+// ATTACHMENT HELPERS (SharePoint Document Library)
+// ============================================================
+async function uploadAttachment(expenseId,file){
+  const token=await getToken();
+  const folderPath=`Expense Attachments/${expenseId}`;
+  // Ensure folder exists
+  try{
+    await fetch(`${GRAPH}/sites/${CONFIG.siteId}/drive/root:/${folderPath}`,{
+      method:"PUT",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},
+      body:JSON.stringify({"folder":{},"@microsoft.graph.conflictBehavior":"replace"})
+    });
+  }catch(e){}
+  // Upload file
+  const r=await fetch(`${GRAPH}/sites/${CONFIG.siteId}/drive/root:/${folderPath}/${file.name}:/content`,{
+    method:"PUT",headers:{Authorization:`Bearer ${token}`,"Content-Type":file.type||"application/octet-stream"},
+    body:file
+  });
+  if(!r.ok)throw new Error(`Upload failed: ${r.status}`);
+  return r.json();
+}
+
+async function getAttachments(expenseId){
+  try{
+    const data=await spGet(`${GRAPH}/sites/${CONFIG.siteId}/drive/root:/Expense Attachments/${expenseId}:/children`);
+    return(data.value||[]).map(f=>({name:f.name,size:f.size,url:f.webUrl,id:f.id}));
+  }catch(e){return[]}
+}
+
+// ============================================================
+// UI COMPONENTS
+// ============================================================
+const lCss={display:"block",fontSize:"9px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.8px",color:B.teal300,marginBottom:"3px"};
+
+function Card({children,style,...props}){
+  return <div style={{background:B.card,borderRadius:"8px",border:`1px solid ${B.border}`,padding:"16px",...style}} {...props}>{children}</div>;
+}
+
+function Btn({children,v="primary",disabled,style,...props}){
+  const base={fontFamily:fb,fontWeight:700,fontSize:"11px",border:"none",borderRadius:"4px",cursor:disabled?"not-allowed":"pointer",padding:"7px 16px",letterSpacing:"0.3px",opacity:disabled?0.5:1,transition:"all 0.15s"};
+  const variants={
+    primary:{...base,background:B.gold,color:"#1C3740"},
+    secondary:{...base,background:B.teal600,color:B.teal100},
+    danger:{...base,background:B.no,color:B.white},
+    ghost:{...base,background:"transparent",color:B.teal300,padding:"7px 10px"},
+    small:{...base,background:B.teal600,color:B.teal200,fontSize:"10px",padding:"4px 10px"},
+  };
+  return <button style={{...variants[v],...style}} disabled={disabled} {...props}>{children}</button>;
+}
+
+function F({label,children,required,style}){
+  return <div style={{marginBottom:"8px",...style}}>
+    {label&&<label style={lCss}>{label}{required&&<span style={{color:B.no}}> *</span>}</label>}
+    {children}
+  </div>;
+}
+
+const inputStyle={
+  width:"100%",padding:"7px 10px",background:B.inputBg,border:`1px solid ${B.inputBorder}`,
+  borderRadius:"4px",color:B.text,fontSize:"12px",fontFamily:fb,outline:"none",
+};
+
+function Inp({style,...props}){return <input style={{...inputStyle,...style}} {...props}/>}
+
+function Sel({options,placeholder,style,...props}){
+  return <select style={{...inputStyle,cursor:"pointer",...style}} {...props}>
+    {placeholder&&<option value="">{placeholder}</option>}
+    {(options||[]).map(o=><option key={o} value={o}>{o}</option>)}
+  </select>;
+}
+
+function Txt({style,...props}){return <textarea style={{...inputStyle,minHeight:"60px",resize:"vertical",...style}} {...props}/>}
+
+function StatusBadge({status}){
+  return <span style={{display:"inline-block",padding:"2px 8px",borderRadius:"3px",fontSize:"9px",fontWeight:800,textTransform:"uppercase",letterSpacing:"0.5px",background:STATUS_COLORS[status]||B.teal600,color:status==="Submitted"?"#1C3740":B.white}}>{status}</span>;
+}
+
+function Toast({message,type="info",onClose}){
+  if(!message)return null;
+  const bg={info:B.teal600,success:B.ok,error:B.no}[type]||B.teal600;
+  return <div style={{position:"fixed",top:"16px",right:"16px",background:bg,color:B.white,padding:"10px 20px",borderRadius:"6px",fontSize:"12px",fontWeight:600,zIndex:9999,boxShadow:"0 4px 20px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:"10px",maxWidth:"400px"}}>
+    <span>{message}</span>
+    <button onClick={onClose} style={{background:"none",border:"none",color:B.white,cursor:"pointer",fontSize:"16px",lineHeight:1}}>×</button>
+  </div>;
+}
+
+// ============================================================
+// EXPENSE FORM COMPONENT
+// ============================================================
+function ExpenseForm({settings,users,userEmail,onSubmit,onCancel}){
+  const s=settings||DEFAULT_SETTINGS;
+  const cats=s.categories||DEFAULT_CATEGORIES;
+  const props=s.properties||DEFAULT_PROPERTIES;
+  const currentUser=users?.find(u=>u.email.toLowerCase()===(userEmail||"").toLowerCase());
+  const homeOffice=currentUser?.homeOffice||"";
+
+  const[expType,setExpType]=useState("");
+  const[date,setDate]=useState(localToday());
+  const[vendor,setVendor]=useState("");
+  const[description,setDescription]=useState("");
+  // Line items (Reimb/CC)
+  const[lineItems,setLineItems]=useState([{category:"",description:"",amount:"",property:"",sfAddress:"",taxable:true}]);
+  const[tax,setTax]=useState("");
+  const[tip,setTip]=useState("");
+  // Mileage
+  const defaultStops=homeOffice?[homeOffice,""]:["",""];
+  const[stops,setStops]=useState(defaultStops);
+  const[miles,setMiles]=useState("");
+  const[mileCategory,setMileCategory]=useState("Travel");
+  const[mileProperties,setMileProperties]=useState([]);
+  const[mileSfAddress,setMileSfAddress]=useState("");
+  const[routeInfo,setRouteInfo]=useState(null);
+  const[calculating,setCalculating]=useState(false);
+  // CC
+  const[ccLast4,setCcLast4]=useState("");
+  const[ccDate,setCcDate]=useState("");
+  // Attachments
+  const[files,setFiles]=useState([]);
+  const fileRef=useRef(null);
+  const cameraRef=useRef(null);
+  // State
+  const[submitting,setSubmitting]=useState(false);
+  const[error,setError]=useState(null);
+
+  const isMileage=expType==="Mileage";
+  const isCC=expType==="Credit Card Reconciliation";
+  const isReimb=expType==="Personal Reimbursement";
+  const hasLineItems=isReimb||isCC;
+
+  // Line item helpers
+  const updateLine=(idx,field,val)=>{
+    const next=[...lineItems];next[idx]={...next[idx],[field]:val};
+    if(field==="property"&&val!=="Single Family")next[idx].sfAddress="";
+    setLineItems(next);
+  };
+  const addLine=()=>setLineItems([...lineItems,{category:"",description:"",amount:"",property:"",sfAddress:"",taxable:true}]);
+  const removeLine=(idx)=>lineItems.length>1&&setLineItems(lineItems.filter((_,i)=>i!==idx));
+
+  // Mileage stop helpers
+  const updateStop=(idx,val)=>{const next=[...stops];next[idx]=val;setStops(next)};
+  const addStop=()=>setStops([...stops,""]);
+  const removeStop=(idx)=>stops.length>2&&setStops(stops.filter((_,i)=>i!==idx));
+
+  // Totals
+  const subtotal=hasLineItems?lineItems.reduce((t,l)=>t+(parseFloat(l.amount)||0),0):0;
+  const taxNum=parseFloat(tax)||0;
+  const tipNum=parseFloat(tip)||0;
+  const grandTotal=hasLineItems?subtotal+taxNum+tipNum:0;
+  const mileageTotal=isMileage?(parseFloat(miles)||0)*(s.mileageRate||0.70):0;
+
+  // Tax allocation preview
+  const taxableSum=lineItems.filter(l=>l.taxable).reduce((t,l)=>t+(parseFloat(l.amount)||0),0);
+
+  // Calculate mileage route
+  const calculateRoute=useCallback(async()=>{
+    const validStops=stops.filter(s=>s.trim());
+    if(validStops.length<2)return;
+    setCalculating(true);setRouteInfo(null);
+    try{
+      const directionsService=new google.maps.DirectionsService();
+      const origin=validStops[0];
+      const destination=validStops[validStops.length-1];
+      const waypoints=validStops.slice(1,-1).map(s=>({location:s,stopover:true}));
+      const result=await directionsService.route({origin,destination,waypoints,travelMode:"DRIVING"});
+      const totalMeters=result.routes[0].legs.reduce((t,l)=>t+l.distance.value,0);
+      const totalMiles=Math.round(totalMeters*0.000621371*10)/10;
+      const totalDuration=result.routes[0].legs.reduce((t,l)=>t+l.duration.value,0);
+      const durMin=Math.round(totalDuration/60);
+      setMiles(String(totalMiles));
+      setRouteInfo({miles:totalMiles,duration:`${durMin} min`,legs:result.routes[0].legs.length});
+    }catch(e){
+      setError("Route calculation failed: "+e.message);
+    }finally{setCalculating(false)}
+  },[stops]);
+
+  // File handling
+  const handleFiles=(newFiles)=>{
+    const total=[...files,...Array.from(newFiles)].slice(0,5);
+    setFiles(total);
+  };
+  const removeFile=(idx)=>setFiles(files.filter((_,i)=>i!==idx));
+
+  // Submit
+  const handleSubmit=async()=>{
+    if(!expType){setError("Select an expense type");return}
+    if(!date){setError("Date is required");return}
+    if(hasLineItems&&lineItems.every(l=>!l.amount)){setError("Add at least one line item");return}
+    if(isMileage&&!miles){setError("Miles are required");return}
+    if(isCC&&!ccLast4){setError("Card last 4 digits required");return}
+
+    setSubmitting(true);setError(null);
+    try{
+      const fields={
+        Title:expType,
+        ExpenseType:expType,
+        ExpenseDate:date+"T00:00:00Z",
+        Description:description||`${expType} - ${vendor||""}`.trim(),
+        Vendor:vendor,
+        Status:"Submitted",
+        SubmittedBy:userEmail,
+        SubmittedByName:getUserName()||userEmail,
+        SubmittedDate:new Date().toISOString(),
+      };
+
+      if(hasLineItems){
+        fields.LineItemsJSON=JSON.stringify(lineItems.map(l=>({
+          category:l.category,description:l.description,
+          amount:parseFloat(l.amount)||0,property:l.property,
+          sfAddress:l.sfAddress,taxable:l.taxable
+        })));
+        fields.Amount=grandTotal;
+        fields.Tax=taxNum;
+        fields.Tip=tipNum;
+        fields.Category=lineItems[0]?.category||"";
+      }
+
+      if(isMileage){
+        fields.MileageStopsJSON=JSON.stringify(stops.filter(s=>s.trim()));
+        fields.Miles=parseFloat(miles)||0;
+        fields.MileageRate=s.mileageRate||0.70;
+        fields.Amount=mileageTotal;
+        fields.Category=mileCategory;
+        fields.MileagePropertiesJSON=JSON.stringify(mileProperties);
+        if(mileProperties.includes("Single Family")&&mileSfAddress){
+          fields.MileSfAddress=mileSfAddress;
+        }
+      }
+
+      if(isCC){
+        fields.CardLast4=ccLast4;
+        fields.ChargeDate=ccDate?ccDate+"T00:00:00Z":"";
+      }
+
+      const result=await createExpense(fields);
+      const newId=result?.id;
+
+      // Upload attachments
+      if(newId&&files.length>0){
+        for(const f of files){
+          try{await uploadAttachment(newId,f)}catch(e){console.warn("Attachment upload failed:",e)}
+        }
+      }
+
+      onSubmit&&onSubmit();
+    }catch(e){
+      setError("Submit failed: "+e.message);
+    }finally{setSubmitting(false)}
+  };
+
+  const handleTypeChange=(v)=>{
+    setExpType(v);setMiles("");setTax("");setTip("");setVendor("");setDescription("");
+    setLineItems([{category:"",description:"",amount:"",property:"",sfAddress:"",taxable:true}]);
+    setFiles([]);setRouteInfo(null);setCcLast4("");setCcDate("");
+    if(v==="Mileage")setStops(homeOffice?[homeOffice,""]:[""]);
+    setMileProperties([]);setMileSfAddress("");
+  };
+
+  return <Card>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}}>
+      <h3 style={{fontSize:"14px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"1px"}}>Submit Expense</h3>
+      {onCancel&&<Btn v="ghost" onClick={onCancel}>← Back</Btn>}
+    </div>
+
+    {error&&<div style={{background:"rgba(211,91,75,0.15)",border:`1px solid ${B.no}`,borderRadius:"4px",padding:"8px 12px",marginBottom:"10px",fontSize:"11px",color:B.no,fontWeight:600}}>{error}</div>}
+
+    {/* Expense Type */}
+    <F label="Expense Type" required>
+      <Sel value={expType} onChange={e=>handleTypeChange(e.target.value)} options={s.expenseTypes||DEFAULT_EXPENSE_TYPES} placeholder="Select type..."/>
+    </F>
+
+    {expType&&<>
+      {/* Common fields */}
+      <div style={{display:"grid",gridTemplateColumns:isCC?"1fr 1fr 1fr":"1fr 1fr",gap:"8px"}}>
+        <F label="Date" required><Inp type="date" value={date} onChange={e=>setDate(e.target.value)}/></F>
+        <F label="Vendor / Payee"><Inp value={vendor} onChange={e=>setVendor(e.target.value)} placeholder="e.g. Home Depot, Shell"/></F>
+        {isCC&&<F label="Card Last 4" required><Inp value={ccLast4} onChange={e=>setCcLast4(e.target.value.replace(/\D/g,"").slice(0,4))} placeholder="1234" maxLength={4}/></F>}
+      </div>
+      {isCC&&<F label="Charge Date"><Inp type="date" value={ccDate} onChange={e=>setCcDate(e.target.value)}/></F>}
+
+      {/* ── LINE ITEMS (Reimb/CC) ── */}
+      {hasLineItems&&<div style={{marginTop:"8px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
+          <label style={{...lCss,marginBottom:0}}>Line Items</label>
+          <Btn v="small" onClick={addLine}>+ Add Line</Btn>
+        </div>
+        {lineItems.map((li,idx)=>(
+          <div key={idx} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"6px",padding:"8px",marginBottom:"6px",position:"relative"}}>
+            {lineItems.length>1&&<button onClick={()=>removeLine(idx)} style={{position:"absolute",top:"4px",right:"6px",background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"14px",fontWeight:700}}>×</button>}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 2fr 80px",gap:"6px",marginBottom:"4px"}}>
+              <Sel value={li.category} onChange={e=>updateLine(idx,"category",e.target.value)} options={cats} placeholder="Category" style={{fontSize:"11px",padding:"5px 6px"}}/>
+              <Inp value={li.description} onChange={e=>updateLine(idx,"description",e.target.value)} placeholder="Description" style={{fontSize:"11px",padding:"5px 6px"}}/>
+              <Inp type="number" value={li.amount} onChange={e=>updateLine(idx,"amount",e.target.value)} placeholder="$0.00" style={{fontSize:"11px",padding:"5px 6px",textAlign:"right"}} step="0.01" min="0"/>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:"6px",alignItems:"center"}}>
+              <Sel value={li.property} onChange={e=>updateLine(idx,"property",e.target.value)} options={props} placeholder="Property (optional)" style={{fontSize:"10px",padding:"4px 6px"}}/>
+              {li.property==="Single Family"&&<Inp value={li.sfAddress} onChange={e=>updateLine(idx,"sfAddress",e.target.value)} placeholder="Address..." style={{fontSize:"10px",padding:"4px 6px"}}/>}
+              {li.property!=="Single Family"&&<div/>}
+              <label style={{display:"flex",alignItems:"center",gap:"4px",fontSize:"10px",color:B.teal300,cursor:"pointer",whiteSpace:"nowrap"}}>
+                <input type="checkbox" checked={li.taxable} onChange={e=>updateLine(idx,"taxable",e.target.checked)}/> Tax
+              </label>
+            </div>
+          </div>
+        ))}
+
+        {/* Tax & Tip */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",marginTop:"8px"}}>
+          <F label="Tax"><Inp type="number" value={tax} onChange={e=>setTax(e.target.value)} placeholder="$0.00" step="0.01" min="0"/></F>
+          <F label="Tip"><Inp type="number" value={tip} onChange={e=>setTip(e.target.value)} placeholder="$0.00" step="0.01" min="0"/></F>
+          <F label="Grand Total">
+            <div style={{padding:"7px 10px",background:B.teal900,border:`1px solid ${B.gold}`,borderRadius:"4px",fontSize:"14px",fontWeight:800,color:B.gold,textAlign:"right"}}>{fmtMoney(grandTotal)}</div>
+          </F>
+        </div>
+
+        {/* Tax allocation preview */}
+        {taxNum>0&&taxableSum>0&&<div style={{background:B.teal900,borderRadius:"4px",padding:"6px 8px",marginTop:"4px",fontSize:"10px",color:B.teal300}}>
+          <span style={{fontWeight:700}}>Tax allocation:</span>{" "}
+          {lineItems.filter(l=>l.taxable&&parseFloat(l.amount)>0).map((l,i,arr)=>{
+            const pct=(parseFloat(l.amount)||0)/taxableSum;
+            const alloc=Math.round(pct*taxNum*100)/100;
+            return <span key={i}>{l.category||`Line ${i+1}`}: {fmtMoney(alloc)}{i<arr.length-1?", ":""}</span>;
+          })}
+        </div>}
+      </div>}
+
+      {/* ── MILEAGE ── */}
+      {isMileage&&<div style={{marginTop:"8px"}}>
+        <label style={lCss}>Route Stops</label>
+        {stops.map((stop,idx)=>(
+          <div key={idx} style={{display:"flex",gap:"6px",alignItems:"center",marginBottom:"4px"}}>
+            <span style={{fontSize:"10px",color:B.teal400,fontWeight:700,width:"14px"}}>{idx===0?"A":idx===stops.length-1?"B":String.fromCharCode(65+idx)}</span>
+            <Inp value={stop} onChange={e=>updateStop(idx,e.target.value)} placeholder={idx===0?"Start address...":"Destination..."} style={{flex:1}}/>
+            {stops.length>2&&idx>0&&idx<stops.length-1&&<button onClick={()=>removeStop(idx)} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"14px"}}>×</button>}
+          </div>
+        ))}
+        <div style={{display:"flex",gap:"8px",marginTop:"4px",marginBottom:"8px"}}>
+          <Btn v="small" onClick={addStop}>+ Add Stop</Btn>
+          <Btn v="primary" onClick={calculateRoute} disabled={stops.filter(s=>s.trim()).length<2||calculating} style={{fontSize:"10px",padding:"4px 12px"}}>
+            {calculating?"Calculating...":"🗺️ Calculate Route"}
+          </Btn>
+        </div>
+        {routeInfo&&<div style={{background:B.teal900,borderRadius:"4px",padding:"6px 8px",marginBottom:"8px",fontSize:"11px",color:B.ok,fontWeight:600}}>
+          ✓ Route: {routeInfo.miles} mi • ~{routeInfo.duration}{routeInfo.legs>1?` • ${routeInfo.legs} legs`:""}
+        </div>}
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px"}}>
+          <F label="Miles"><Inp type="number" value={miles} onChange={e=>setMiles(e.target.value)} placeholder="0.0" step="0.1" min="0"/></F>
+          <F label={`Rate ($${(s.mileageRate||0.70).toFixed(2)}/mi)`}>
+            <div style={{...inputStyle,background:B.teal800,color:B.teal300}}>{fmtMoney(mileageTotal)}</div>
+          </F>
+          <F label="Category"><Sel value={mileCategory} onChange={e=>setMileCategory(e.target.value)} options={cats}/></F>
+        </div>
+
+        {/* Multi-property selector */}
+        <div style={{marginTop:"8px"}}>
+          <label style={lCss}>Associated Properties (cost splits evenly)</label>
+          <div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginTop:"4px"}}>
+            {props.map(p=>(
+              <button key={p} onClick={()=>setMileProperties(prev=>prev.includes(p)?prev.filter(x=>x!==p):[...prev,p])}
+                style={{background:mileProperties.includes(p)?B.teal700:B.teal900,color:mileProperties.includes(p)?B.gold:B.teal400,
+                  border:`1px solid ${mileProperties.includes(p)?B.gold:B.teal600}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",fontWeight:600,cursor:"pointer"}}>
+                {mileProperties.includes(p)?"✓ ":""}{p}
+              </button>
+            ))}
+          </div>
+          {mileProperties.includes("Single Family")&&<div style={{marginTop:"4px"}}>
+            <Inp value={mileSfAddress} onChange={e=>setMileSfAddress(e.target.value)} placeholder="Single Family address..." style={{fontSize:"11px"}}/>
+          </div>}
+          {mileProperties.length>1&&<div style={{fontSize:"10px",color:B.teal300,marginTop:"4px"}}>
+            Split: {fmtMoney(mileageTotal/mileProperties.length)} each × {mileProperties.length} properties
+          </div>}
+        </div>
+      </div>}
+
+      {/* Description */}
+      <F label="Notes / Description" style={{marginTop:"8px"}}>
+        <Txt value={description} onChange={e=>setDescription(e.target.value)} placeholder="Additional details..." rows={2}/>
+      </F>
+
+      {/* ── ATTACHMENTS ── */}
+      <div style={{marginTop:"8px"}}>
+        <label style={lCss}>Attachments ({files.length}/5)</label>
+        <div style={{display:"flex",gap:"6px",marginTop:"4px"}}>
+          <input ref={fileRef} type="file" accept="image/*,.pdf" multiple hidden onChange={e=>handleFiles(e.target.files)}/>
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={e=>handleFiles(e.target.files)}/>
+          <Btn v="small" onClick={()=>fileRef.current?.click()} disabled={files.length>=5}>📎 Upload</Btn>
+          <Btn v="small" onClick={()=>cameraRef.current?.click()} disabled={files.length>=5}>📷 Camera</Btn>
+        </div>
+        {files.length>0&&<div style={{marginTop:"6px",display:"flex",gap:"4px",flexWrap:"wrap"}}>
+          {files.map((f,i)=>(
+            <div key={i} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.teal200,display:"flex",alignItems:"center",gap:"6px"}}>
+              <span>{f.name.length>20?f.name.slice(0,18)+"...":f.name}</span>
+              <span style={{color:B.teal400}}>({(f.size/1024).toFixed(0)}KB)</span>
+              <button onClick={()=>removeFile(i)} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"12px"}}>×</button>
+            </div>
+          ))}
+        </div>}
+      </div>
+
+      {/* Submit */}
+      <div style={{display:"flex",justifyContent:"flex-end",gap:"8px",marginTop:"16px",borderTop:`1px solid ${B.teal600}`,paddingTop:"12px"}}>
+        {onCancel&&<Btn v="secondary" onClick={onCancel}>Cancel</Btn>}
+        <Btn onClick={handleSubmit} disabled={submitting}>{submitting?"Submitting...":"Submit Expense"}</Btn>
+      </div>
+    </>}
+  </Card>;
+}
+
+// ============================================================
+// EXPENSE LIST COMPONENT
+// ============================================================
+function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,actionLoading}){
+  const filtered=filter?expenses.filter(filter):expenses;
+  if(filtered.length===0)return <Card style={{marginBottom:"8px"}}><div style={{fontSize:"11px",color:B.teal400,textAlign:"center",padding:"8px"}}>{title}: None</div></Card>;
+
+  return <Card style={{marginBottom:"8px"}}>
+    <h4 style={{fontSize:"11px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"0.8px",marginBottom:"8px"}}>{title} ({filtered.length})</h4>
+    {filtered.map(exp=>(
+      <div key={exp.id} onClick={()=>onView&&onView(exp)} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"6px",padding:"8px 10px",marginBottom:"4px",cursor:"pointer",transition:"background 0.15s"}}
+        onMouseEnter={e=>e.currentTarget.style.background="rgba(205,160,75,0.06)"}
+        onMouseLeave={e=>e.currentTarget.style.background=B.teal900}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"8px",flex:1}}>
+            <StatusBadge status={exp.Status}/>
+            <span style={{fontSize:"12px",fontWeight:700,color:B.text}}>{exp.SubmittedByName||exp.SubmittedBy}</span>
+            <span style={{fontSize:"11px",color:B.teal300}}>{exp.ExpenseType}</span>
+            {exp.Vendor&&<span style={{fontSize:"10px",color:B.teal400}}>• {exp.Vendor}</span>}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+            <span style={{fontSize:"13px",fontWeight:800,color:B.gold}}>{fmtMoney(exp.Amount)}</span>
+            <span style={{fontSize:"10px",color:B.teal400}}>{fmtDate(exp.ExpenseDate)}</span>
+            {/* Action buttons based on role */}
+            {userRole==="admin"&&exp.Status==="Submitted"&&<>
+              <Btn v="small" style={{background:B.ok,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"approve")}} disabled={actionLoading}>✓</Btn>
+              <Btn v="small" style={{background:B.no,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"reject")}} disabled={actionLoading}>✗</Btn>
+            </>}
+            {userRole==="accounting"&&exp.Status==="Approved"&&
+              <Btn v="small" style={{background:B.ok,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"process")}} disabled={actionLoading}>$ Process</Btn>
+            }
+          </div>
+        </div>
+      </div>
+    ))}
+  </Card>;
+}
+
+// ============================================================
+// DASHBOARD COMPONENT
+// ============================================================
+function Dashboard({expenses}){
+  const submitted=expenses.filter(e=>e.Status==="Submitted");
+  const approved=expenses.filter(e=>e.Status==="Approved");
+  const processed=expenses.filter(e=>e.Status==="Processed");
+  const rejected=expenses.filter(e=>e.Status==="Rejected");
+  const total=expenses.reduce((t,e)=>t+(e.Amount||0),0);
+  const totalTips=expenses.reduce((t,e)=>t+(e.Tip||0),0);
+  const totalTax=expenses.reduce((t,e)=>t+(e.Tax||0),0);
+
+  // By category
+  const byCat={};expenses.forEach(e=>{const c=e.Category||"Other";byCat[c]=(byCat[c]||0)+(e.Amount||0)});
+  const catEntries=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
+
+  const kpi=(label,value,sub,color)=>(
+    <div style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"6px",padding:"10px",textAlign:"center"}}>
+      <div style={{fontSize:"18px",fontWeight:900,color:color||B.gold}}>{value}</div>
+      <div style={{fontSize:"9px",fontWeight:700,color:B.teal300,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:"2px"}}>{label}</div>
+      {sub&&<div style={{fontSize:"9px",color:B.teal400,marginTop:"2px"}}>{sub}</div>}
+    </div>
+  );
+
+  return <Card>
+    <h3 style={{fontSize:"14px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"1px",marginBottom:"12px"}}>Dashboard</h3>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:"8px",marginBottom:"16px"}}>
+      {kpi("Total",fmtMoney(total),`${expenses.length} expenses`)}
+      {kpi("Pending",submitted.length,fmtMoney(submitted.reduce((t,e)=>t+(e.Amount||0),0)),B.goldDim)}
+      {kpi("Approved",approved.length,null,B.ok)}
+      {kpi("Processed",processed.length,null,"#6A8EC8")}
+      {kpi("Rejected",rejected.length,null,B.no)}
+      {totalTips>0&&kpi("Tips",fmtMoney(totalTips),`${expenses.filter(e=>e.Tip>0).length} expense(s)`,"#9E7B2F")}
+      {totalTax>0&&kpi("Tax Paid",fmtMoney(totalTax),null,"#6B7A7A")}
+    </div>
+
+    {catEntries.length>0&&<>
+      <h4 style={{fontSize:"11px",fontWeight:800,color:B.teal200,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"6px"}}>By Category</h4>
+      {catEntries.slice(0,8).map(([cat,amt])=>{
+        const pct=total>0?Math.round(amt/total*100):0;
+        return <div key={cat} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"4px"}}>
+          <span style={{fontSize:"11px",color:B.teal200,width:"140px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cat}</span>
+          <div style={{flex:1,height:"6px",background:B.teal800,borderRadius:"3px",overflow:"hidden"}}>
+            <div style={{width:pct+"%",height:"100%",background:B.gold,borderRadius:"3px"}}/>
+          </div>
+          <span style={{fontSize:"10px",color:B.teal300,width:"60px",textAlign:"right"}}>{fmtMoney(amt)}</span>
+        </div>;
+      })}
+    </>}
+  </Card>;
+}
+
+// ============================================================
+// ADMIN PANEL COMPONENT
+// ============================================================
+function AdminPanel({settings,users,onSave,saving}){
+  const[s,setS]=useState({...DEFAULT_SETTINGS,...settings});
+  const[u,setU]=useState([...(users||DEFAULT_USERS)]);
+  const[newCat,setNewCat]=useState("");
+  const[newProp,setNewProp]=useState("");
+  const[newUser,setNewUser]=useState({email:"",name:"",role:"employee",homeOffice:""});
+
+  const addCat=()=>{if(newCat.trim()&&!s.categories.includes(newCat.trim())){setS({...s,categories:[...s.categories,newCat.trim()]});setNewCat("")}};
+  const removeCat=(c)=>setS({...s,categories:s.categories.filter(x=>x!==c)});
+  const addProp=()=>{if(newProp.trim()&&!s.properties.includes(newProp.trim())){setS({...s,properties:[...s.properties,newProp.trim()]});setNewProp("")}};
+  const removeProp=(p)=>p!=="Single Family"&&setS({...s,properties:s.properties.filter(x=>x!==p)});
+  const addUser=()=>{if(newUser.email.trim()&&!u.find(x=>x.email.toLowerCase()===newUser.email.toLowerCase())){setU([...u,{...newUser,email:newUser.email.toLowerCase()}]);setNewUser({email:"",name:"",role:"employee",homeOffice:""})}};
+  const removeUser=(email)=>setU(u.filter(x=>x.email!==email));
+  const updateUserRole=(email,role)=>setU(u.map(x=>x.email===email?{...x,role}:x));
+  const updateUserHome=(email,homeOffice)=>setU(u.map(x=>x.email===email?{...x,homeOffice}:x));
+
+  return <Card>
+    <h3 style={{fontSize:"14px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"1px",marginBottom:"12px"}}>Admin Settings</h3>
+
+    {/* Mileage Rate */}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"16px"}}>
+      <F label="Mileage Rate ($/mile)"><Inp type="number" value={s.mileageRate} onChange={e=>setS({...s,mileageRate:parseFloat(e.target.value)||0})} step="0.01"/></F>
+      <F label="Rate Year"><Inp value={s.mileageRateYear} onChange={e=>setS({...s,mileageRateYear:e.target.value})}/></F>
+    </div>
+
+    {/* Categories */}
+    <div style={{marginBottom:"16px"}}>
+      <label style={lCss}>Expense Categories</label>
+      <div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"6px"}}>
+        {s.categories.map(c=><span key={c} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.teal200,display:"flex",alignItems:"center",gap:"4px"}}>
+          {c}<button onClick={()=>removeCat(c)} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"11px"}}>×</button>
+        </span>)}
+      </div>
+      <div style={{display:"flex",gap:"4px"}}>
+        <Inp value={newCat} onChange={e=>setNewCat(e.target.value)} placeholder="New category..." onKeyDown={e=>e.key==="Enter"&&addCat()} style={{flex:1,fontSize:"11px"}}/>
+        <Btn v="small" onClick={addCat}>Add</Btn>
+      </div>
+    </div>
+
+    {/* Properties */}
+    <div style={{marginBottom:"16px"}}>
+      <label style={lCss}>Properties (for Bill-Backs)</label>
+      <div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"6px"}}>
+        {s.properties.map(p=><span key={p} style={{background:B.teal900,border:`1px solid ${p==="Single Family"?B.gold:B.teal600}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:p==="Single Family"?B.gold:B.teal200,display:"flex",alignItems:"center",gap:"4px"}}>
+          {p}{p!=="Single Family"&&<button onClick={()=>removeProp(p)} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"11px"}}>×</button>}
+        </span>)}
+      </div>
+      <div style={{display:"flex",gap:"4px"}}>
+        <Inp value={newProp} onChange={e=>setNewProp(e.target.value)} placeholder="New property..." onKeyDown={e=>e.key==="Enter"&&addProp()} style={{flex:1,fontSize:"11px"}}/>
+        <Btn v="small" onClick={addProp}>Add</Btn>
+      </div>
+    </div>
+
+    {/* Users */}
+    <div style={{marginBottom:"16px"}}>
+      <label style={lCss}>Users & Roles</label>
+      {u.map(user=>(
+        <div key={user.email} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"4px",padding:"6px 8px",marginBottom:"4px",display:"grid",gridTemplateColumns:"1fr 1fr auto 1fr auto",gap:"6px",alignItems:"center"}}>
+          <span style={{fontSize:"11px",color:B.text,fontWeight:600}}>{user.name||user.email}</span>
+          <span style={{fontSize:"10px",color:B.teal400}}>{user.email}</span>
+          <Sel value={user.role} onChange={e=>updateUserRole(user.email,e.target.value)} options={["admin","accounting","employee"]} style={{fontSize:"10px",padding:"3px 6px",width:"100px"}}/>
+          <Inp value={user.homeOffice||""} onChange={e=>updateUserHome(user.email,e.target.value)} placeholder="Home office address" style={{fontSize:"10px",padding:"3px 6px"}}/>
+          <button onClick={()=>removeUser(user.email)} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"14px"}}>×</button>
+        </div>
+      ))}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto auto",gap:"4px",marginTop:"6px"}}>
+        <Inp value={newUser.email} onChange={e=>setNewUser({...newUser,email:e.target.value})} placeholder="Email" style={{fontSize:"10px"}}/>
+        <Inp value={newUser.name} onChange={e=>setNewUser({...newUser,name:e.target.value})} placeholder="Name" style={{fontSize:"10px"}}/>
+        <Sel value={newUser.role} onChange={e=>setNewUser({...newUser,role:e.target.value})} options={["admin","accounting","employee"]} style={{fontSize:"10px",padding:"3px",width:"90px"}}/>
+        <Btn v="small" onClick={addUser}>Add</Btn>
+      </div>
+    </div>
+
+    <div style={{borderTop:`1px solid ${B.teal600}`,paddingTop:"12px",display:"flex",justifyContent:"flex-end"}}>
+      <Btn onClick={()=>onSave(s,u)} disabled={saving}>{saving?"Saving...":"Save Settings"}</Btn>
+    </div>
+  </Card>;
+}
+
+// ============================================================
+// MAIN APP
+// ============================================================
+function ExpenseManager(){
+  const[authed,setAuthed]=useState(false);
+  const[authError,setAuthError]=useState(null);
+  const[userEmail,setUserEmail]=useState(null);
+  const[userName,setUserName]=useState(null);
+  const[settings,setSettings]=useState(DEFAULT_SETTINGS);
+  const[users,setUsers]=useState(DEFAULT_USERS);
+  const[expenses,setExpenses]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[tab,setTab]=useState("submit");
+  const[toast,setToast]=useState(null);
+  const[actionLoading,setActionLoading]=useState(false);
+  const[viewExpense,setViewExpense]=useState(null);
+  const[adminSaving,setAdminSaving]=useState(false);
+
+  // Determine role
+  const userRole=useMemo(()=>{
+    if(!userEmail)return"employee";
+    const u=users.find(x=>x.email.toLowerCase()===userEmail.toLowerCase());
+    return u?.role||"employee";
+  },[userEmail,users]);
+
+  const isAdmin=userRole==="admin";
+  const isAccounting=userRole==="accounting";
+
+  // Auth
+  useEffect(()=>{
+    (async()=>{
+      try{
+        await msalInstance?.initialize?.();
+        const token=await getToken();
+        setUserEmail(getUserEmail());
+        setUserName(getUserName());
+        setAuthed(true);
+      }catch(e){
+        setAuthError(e.message);
+      }
+    })();
+  },[]);
+
+  // Load data
+  useEffect(()=>{
+    if(!authed)return;
+    (async()=>{
+      setLoading(true);
+      try{
+        const[cfg,exps]=await Promise.all([loadConfig(),loadExpenses()]);
+        setSettings(cfg.settings||DEFAULT_SETTINGS);
+        setUsers(cfg.users||DEFAULT_USERS);
+        setExpenses(exps);
+      }catch(e){
+        console.error("Load error:",e);
+        setToast({message:"Failed to load data: "+e.message,type:"error"});
+      }finally{setLoading(false)}
+    })();
+  },[authed]);
+
+  // Refresh expenses
+  const refresh=async()=>{
+    try{
+      const exps=await loadExpenses();
+      setExpenses(exps);
+    }catch(e){console.error("Refresh error:",e)}
+  };
+
+  // Actions
+  const handleAction=async(itemId,action,notes)=>{
+    setActionLoading(true);
+    try{
+      const fields={};
+      if(action==="approve"){
+        fields.Status="Approved";fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
+      }else if(action==="reject"){
+        fields.Status="Rejected";fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
+        if(notes)fields.RejectionNotes=notes;
+      }else if(action==="process"){
+        fields.Status="Processed";fields.ProcessedBy=userEmail;fields.ProcessedDate=new Date().toISOString();
+      }
+      await updateExpense(itemId,fields);
+      await refresh();
+      setToast({message:`Expense ${action}d successfully`,type:"success"});
+      setViewExpense(null);
+    }catch(e){
+      setToast({message:`Action failed: ${e.message}`,type:"error"});
+    }finally{setActionLoading(false)}
+  };
+
+  // Admin save
+  const handleAdminSave=async(newSettings,newUsers)=>{
+    setAdminSaving(true);
+    try{
+      await saveConfig({settings:newSettings,users:newUsers});
+      setSettings(newSettings);setUsers(newUsers);
+      setToast({message:"Settings saved",type:"success"});
+    }catch(e){
+      setToast({message:"Save failed: "+e.message,type:"error"});
+    }finally{setAdminSaving(false)}
+  };
+
+  // Tabs
+  const tabs=[
+    {id:"submit",label:"Submit Expense",roles:["admin","accounting","employee"]},
+    {id:"my",label:"My Expenses",roles:["admin","accounting","employee"]},
+    {id:"queue",label:isAccounting?"Processing Queue":"Approval Queue",roles:["admin","accounting"]},
+    {id:"dashboard",label:"Dashboard",roles:["admin","accounting"]},
+    {id:"admin",label:"⚙ Admin",roles:["admin"]},
+  ].filter(t=>t.roles.includes(userRole));
+
+  // Login screen
+  if(!authed){
+    return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:B.bg}}>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontSize:"10px",fontWeight:800,textTransform:"uppercase",letterSpacing:"3px",color:B.gold,marginBottom:"2px"}}>NewShire Property Management</div>
+        <h1 style={{fontSize:"22px",fontWeight:900,color:B.text,marginBottom:"16px"}}>Expense Manager</h1>
+        {authError?<div style={{color:B.no,fontSize:"12px",marginBottom:"12px"}}>{authError}</div>:
+          <div style={{color:B.teal300,fontSize:"12px",marginBottom:"12px"}}>Connecting...</div>}
+        <Btn onClick={async()=>{try{await getToken();setAuthed(true);setUserEmail(getUserEmail());setUserName(getUserName());setAuthError(null)}catch(e){setAuthError(e.message)}}}>
+          Sign In with Microsoft
+        </Btn>
+      </div>
+      <div style={{position:"fixed",bottom:"12px",fontSize:"9px",color:B.teal500}}>v{CONFIG.version}</div>
+    </div>;
+  }
+
+  return <div style={{minHeight:"100vh",background:B.bg}}>
+    {toast&&<Toast message={toast.message} type={toast.type} onClose={()=>setToast(null)}/>}
+
+    {/* Header */}
+    <div style={{background:B.teal900,borderBottom:`2px solid ${B.gold}`,padding:"10px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}} className="no-print">
+      <div>
+        <div style={{fontSize:"9px",fontWeight:800,textTransform:"uppercase",letterSpacing:"2px",color:B.gold}}>NewShire Property Management</div>
+        <div style={{fontSize:"16px",fontWeight:900,color:B.text}}>Expense Manager</div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+        {tabs.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{
+            background:tab===t.id?B.gold:"transparent",color:tab===t.id?"#1C3740":B.teal300,
+            border:"none",borderRadius:"4px",padding:"6px 12px",fontSize:"10px",fontWeight:800,
+            textTransform:"uppercase",letterSpacing:"0.5px",cursor:"pointer",fontFamily:fb
+          }}>{t.label}</button>
+        ))}
+        <span style={{fontSize:"10px",color:B.teal400,marginLeft:"8px"}}>✓ {userName} ({ROLE_LABELS[userRole]})</span>
+      </div>
+    </div>
+
+    {/* Content */}
+    <div style={{maxWidth:"1000px",margin:"16px auto",padding:"0 16px"}}>
+      {loading?<Card><div style={{textAlign:"center",color:B.teal300,padding:"20px"}}>Loading expenses...</div></Card>:<>
+
+        {tab==="submit"&&<ExpenseForm settings={settings} users={users} userEmail={userEmail} onSubmit={async()=>{
+          await refresh();setTab("my");setToast({message:"Expense submitted!",type:"success"});
+        }}/>}
+
+        {tab==="my"&&<ExpenseList expenses={expenses} title="My Expenses"
+          filter={e=>e.SubmittedBy?.toLowerCase()===userEmail?.toLowerCase()}
+          userRole={userRole} userEmail={userEmail} onView={setViewExpense}/>}
+
+        {tab==="queue"&&isAdmin&&<>
+          <ExpenseList expenses={expenses} title="Pending Approval" filter={e=>e.Status==="Submitted"}
+            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} actionLoading={actionLoading}/>
+          <ExpenseList expenses={expenses} title="Recently Reviewed" filter={e=>["Approved","Rejected"].includes(e.Status)}
+            userRole={userRole} userEmail={userEmail} onView={setViewExpense}/>
+        </>}
+
+        {tab==="queue"&&isAccounting&&<>
+          <ExpenseList expenses={expenses} title="Ready to Process" filter={e=>e.Status==="Approved"}
+            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} actionLoading={actionLoading}/>
+          <ExpenseList expenses={expenses} title="Processed" filter={e=>e.Status==="Processed"}
+            userRole={userRole} userEmail={userEmail} onView={setViewExpense}/>
+        </>}
+
+        {tab==="dashboard"&&<Dashboard expenses={expenses}/>}
+
+        {tab==="admin"&&isAdmin&&<AdminPanel settings={settings} users={users} onSave={handleAdminSave} saving={adminSaving}/>}
+      </>}
+    </div>
+
+    <div style={{position:"fixed",bottom:"8px",right:"12px",fontSize:"9px",color:B.teal500}} className="no-print">v{CONFIG.version}</div>
+  </div>;
+}
+
+// Load Google Maps API
+const gmScript=document.createElement("script");
+gmScript.src=`https://maps.googleapis.com/maps/api/js?key=${CONFIG.googleMapsKey}&libraries=places`;
+gmScript.async=true;
+document.head.appendChild(gmScript);
+
+const root=ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(ExpenseManager));
+</script>
+</body>
+</html>
