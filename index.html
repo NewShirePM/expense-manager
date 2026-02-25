@@ -36,7 +36,7 @@ const CONFIG={
   listName:"Expense Log",
   configListName:"Expense Config",
   googleMapsKey:"AIzaSyCgm0GDTAcsYUJtTVrZLR3xS8sazfqXxSY",
-  version:"1.2.0",
+  version:"1.3.0",
 };
 const GRAPH="https://graph.microsoft.com/v1.0";
 
@@ -53,7 +53,7 @@ const DEFAULT_EXPENSE_TYPES=["Personal Reimbursement","Mileage","Credit Card Rec
 const DEFAULT_PROPERTIES=["Fusion Pointe","Townes at Converse","Liberty Square","City View","Villas at Oakwood","701 East Main","Arlington Townes","Hampton Avenue","The Orchard","Single Family"];
 
 const DEFAULT_USERS=[
-  {email:"bturner@newshirepm.com",name:"Brandy Turner",role:"admin",homeOffice:"130 Milestone Way, Greenville, SC"},
+  {email:"bturner@newshirepm.com",name:"Brandy Turner",role:"admin",homeOffice:"130 Milestone Way, Greenville, SC",superAdmin:true},
   {email:"cmunson@newshirepm.com",name:"C. Munson",role:"admin",homeOffice:""},
   {email:"jwhite@vanrockre.com",name:"J. White",role:"admin",homeOffice:""},
 ];
@@ -65,6 +65,7 @@ const DEFAULT_SETTINGS={
   expenseTypes:DEFAULT_EXPENSE_TYPES,
   properties:DEFAULT_PROPERTIES,
   powerAutomateUrl:"",
+  testMode:false,
 };
 
 const DEFAULT_ROUTING={
@@ -162,6 +163,25 @@ async function createListItem(listName,fields){
 
 async function updateListItem(listName,itemId,fields){
   return spPatch(`${listUrl(listName)}/items/${itemId}/fields`,fields);
+}
+
+async function deleteListItem(listName,itemId){
+  const t=await getToken();
+  const r=await fetch(`${listUrl(listName)}/items/${itemId}`,{method:"DELETE",headers:{Authorization:`Bearer ${t}`}});
+  if(!r.ok&&r.status!==204)throw new Error(`Delete failed: ${r.status}`);
+}
+
+async function deleteExpense(itemId){
+  return deleteListItem(CONFIG.listName,itemId);
+}
+
+// Also delete associated attachments folder
+async function deleteExpenseAttachments(expenseId){
+  try{
+    const t=await getToken();
+    const r=await fetch(`${GRAPH}/sites/${CONFIG.siteId}/drive/root:/${CONFIG.attachmentLib}/${expenseId}`,{headers:{Authorization:`Bearer ${t}`}});
+    if(r.ok){const folder=await r.json();await fetch(`${GRAPH}/sites/${CONFIG.siteId}/drive/items/${folder.id}`,{method:"DELETE",headers:{Authorization:`Bearer ${t}`}})}
+  }catch(e){console.warn("Attachment cleanup failed (non-critical):",e)}
 }
 
 // Config helpers — store JSON blob in a single list item
@@ -278,12 +298,14 @@ function buildExpenseEmailHtml(expense,action,opts={}){
 
 async function sendNotificationEmail(expense,action,{routing,settings,users,approverName,rejectionNotes,expenseId}){
   const route=routing?.[expense.ExpenseType];if(!route)return;
+  const testMode=settings?.testMode||false;
+  const currentUser=getUserEmail();
   try{
-    if(action==="submitted"){const a=route.approvers||[];if(a.length===0)return;await sendEmail({to:a,subject:`[Expense Review] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"submitted",{})})}
-    else if(action==="approved"){const ac=route.accounting||[];if(ac.length===0)return;let att=[];try{const fs=await getAttachments(expenseId);for(const f of fs){try{const{base64,contentType}=await getAttachmentBase64(f.id);att.push({name:f.name,contentType,base64})}catch(e){}}}catch(e){}await sendEmail({to:ac,subject:`[Approved \u2014 Process] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"approved",{approverName,powerAutomateUrl:settings?.powerAutomateUrl||"",expenseId}),attachments:att})}
-    else if(action==="rejected"){if(!expense.SubmittedBy)return;await sendEmail({to:expense.SubmittedBy,subject:`[Expense Rejected] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)}`,htmlBody:buildExpenseEmailHtml(expense,"rejected",{approverName,rejectionNotes})})}
-    else if(action==="processed"){const a=route.approvers||[];if(a.length===0)return;await sendEmail({to:a,subject:`[Processed] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"processed",{})})}
-    else if(action==="pending_payment"){const a=route.approvers||[];if(a.length===0)return;await sendEmail({to:a,subject:`[Pending Payment] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"pending_payment",{})})}
+    if(action==="submitted"){let a=route.approvers||[];if(a.length===0)return;if(testMode)a=[currentUser];await sendEmail({to:a,subject:`${testMode?"[TEST] ":""}[Expense Review] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"submitted",{})})}
+    else if(action==="approved"){let ac=route.accounting||[];if(ac.length===0)return;if(testMode)ac=[currentUser];let att=[];try{const fs=await getAttachments(expenseId);for(const f of fs){try{const{base64,contentType}=await getAttachmentBase64(f.id);att.push({name:f.name,contentType,base64})}catch(e){}}}catch(e){}await sendEmail({to:ac,subject:`${testMode?"[TEST] ":""}[Approved \u2014 Process] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"approved",{approverName,powerAutomateUrl:settings?.powerAutomateUrl||"",expenseId}),attachments:att})}
+    else if(action==="rejected"){let to=expense.SubmittedBy;if(!to)return;if(testMode)to=currentUser;await sendEmail({to,subject:`${testMode?"[TEST] ":""}[Expense Rejected] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)}`,htmlBody:buildExpenseEmailHtml(expense,"rejected",{approverName,rejectionNotes})})}
+    else if(action==="processed"){let a=route.approvers||[];if(a.length===0)return;if(testMode)a=[currentUser];await sendEmail({to:a,subject:`${testMode?"[TEST] ":""}[Processed] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"processed",{})})}
+    else if(action==="pending_payment"){let a=route.approvers||[];if(a.length===0)return;if(testMode)a=[currentUser];await sendEmail({to:a,subject:`${testMode?"[TEST] ":""}[Pending Payment] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"pending_payment",{})})}
   }catch(e){console.error("Email notification failed:",e)}
 }
 
@@ -668,13 +690,16 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel}){
 // ============================================================
 // EXPENSE LIST COMPONENT
 // ============================================================
-function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,actionLoading}){
+function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,onDelete,actionLoading,isSuperAdmin}){
   const filtered=filter?expenses.filter(filter):expenses;
   if(filtered.length===0)return <Card style={{marginBottom:"8px"}}><div style={{fontSize:"11px",color:B.teal400,textAlign:"center",padding:"8px"}}>{title}: None</div></Card>;
   const isCC=(exp)=>exp.ExpenseType==="Credit Card Reconciliation";
   return <Card style={{marginBottom:"8px"}}>
     <h4 style={{fontSize:"11px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"0.8px",marginBottom:"8px"}}>{title} ({filtered.length})</h4>
-    {filtered.map(exp=>(
+    {filtered.map(exp=>{
+      const isOwner=exp.SubmittedBy?.toLowerCase()===userEmail?.toLowerCase();
+      const canDelete=isSuperAdmin||(isOwner&&exp.Status==="Submitted");
+      return(
       <div key={exp.id} onClick={()=>onView&&onView(exp)} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"6px",padding:"8px 10px",marginBottom:"4px",cursor:"pointer",transition:"background 0.15s"}}
         onMouseEnter={e=>e.currentTarget.style.background="rgba(205,160,75,0.06)"}
         onMouseLeave={e=>e.currentTarget.style.background=B.teal900}>
@@ -704,10 +729,14 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,a
             {userRole==="admin"&&exp.Status==="Pending Payment"&&onAction&&
               <Btn v="small" style={{background:B.ok,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"paid")}} disabled={actionLoading}>{"\u2713"} Paid</Btn>
             }
+            {/* Delete */}
+            {canDelete&&onDelete&&
+              <Btn v="small" style={{background:"transparent",border:`1px solid ${B.no}`,color:B.no,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onDelete(exp.id)}} disabled={actionLoading}>{"\u2716"}</Btn>
+            }
           </div>
         </div>
       </div>
-    ))}
+    )})}
   </Card>;
 }
 
@@ -875,6 +904,27 @@ function AdminPanel({settings,users,routing,onSave,saving}){
       </F>
     </div>
 
+    {/* Test Mode */}
+    <div style={{marginBottom:"16px",padding:"10px",background:s.testMode?"rgba(211,91,75,0.1)":B.teal900,border:`1px solid ${s.testMode?B.no:B.teal600}`,borderRadius:"6px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+        <button onClick={()=>setS({...s,testMode:!s.testMode})} style={{
+          width:"36px",height:"20px",borderRadius:"10px",border:"none",cursor:"pointer",position:"relative",
+          background:s.testMode?B.no:B.teal600,transition:"background 0.2s"
+        }}>
+          <div style={{width:"16px",height:"16px",borderRadius:"8px",background:B.white,position:"absolute",top:"2px",
+            left:s.testMode?"18px":"2px",transition:"left 0.2s"}}/>
+        </button>
+        <span style={{fontSize:"12px",fontWeight:700,color:s.testMode?B.no:B.teal300}}>
+          {s.testMode?"\u26A0 TEST MODE ON":"Test Mode Off"}
+        </span>
+      </div>
+      <div style={{fontSize:"10px",color:B.teal400,marginTop:"4px"}}>
+        {s.testMode
+          ?"All email notifications redirect to YOUR inbox only. Subject lines prefixed with [TEST]. Save settings to activate."
+          :"When enabled, all notification emails are sent only to the logged-in user. No other recipients receive emails."}
+      </div>
+    </div>
+
     {/* Categories */}
     <div style={{marginBottom:"16px"}}>
       <label style={lCss}>Expense Categories</label>
@@ -907,10 +957,15 @@ function AdminPanel({settings,users,routing,onSave,saving}){
     <div style={{marginBottom:"16px"}}>
       <label style={lCss}>Users & Roles</label>
       {u.map(user=>(
-        <div key={user.email} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"4px",padding:"6px 8px",marginBottom:"4px",display:"grid",gridTemplateColumns:"1fr 1fr auto 1fr auto",gap:"6px",alignItems:"center"}}>
+        <div key={user.email} style={{background:B.teal900,border:`1px solid ${user.superAdmin?B.gold:B.teal600}`,borderRadius:"4px",padding:"6px 8px",marginBottom:"4px",display:"grid",gridTemplateColumns:"1fr 1fr auto auto 1fr auto",gap:"6px",alignItems:"center"}}>
           <span style={{fontSize:"11px",color:B.text,fontWeight:600}}>{user.name||user.email}</span>
           <span style={{fontSize:"10px",color:B.teal400}}>{user.email}</span>
           <Sel value={user.role} onChange={e=>updateUserRole(user.email,e.target.value)} options={["admin","accounting","employee"]} style={{fontSize:"10px",padding:"3px 6px",width:"100px"}}/>
+          <button onClick={()=>setU(u.map(x=>x.email===user.email?{...x,superAdmin:!x.superAdmin}:x))} title="Super Admin: Can delete any expense" style={{
+            background:user.superAdmin?"rgba(205,160,75,0.15)":"transparent",border:`1px solid ${user.superAdmin?B.gold:B.teal600}`,
+            borderRadius:"4px",padding:"2px 6px",fontSize:"9px",fontWeight:700,color:user.superAdmin?B.gold:B.teal400,
+            cursor:"pointer",fontFamily:fb,whiteSpace:"nowrap"
+          }}>{user.superAdmin?"\u2605 Super":"\u2606 Super"}</button>
           <Inp value={user.homeOffice||""} onChange={e=>updateUserHome(user.email,e.target.value)} placeholder="Home office address" style={{fontSize:"10px",padding:"3px 6px"}}/>
           <button onClick={()=>removeUser(user.email)} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"14px"}}>×</button>
         </div>
@@ -1011,6 +1066,11 @@ function ExpenseManager(){
 
   const isAdmin=userRole==="admin";
   const isAccounting=userRole==="accounting";
+  const isSuperAdmin=useMemo(()=>{
+    if(!userEmail)return false;
+    const u=users.find(x=>x.email.toLowerCase()===userEmail.toLowerCase());
+    return u?.superAdmin===true;
+  },[userEmail,users]);
 
   // Auth
   useEffect(()=>{
@@ -1098,6 +1158,27 @@ function ExpenseManager(){
     }finally{setActionLoading(false)}
   };
 
+  // Delete expense
+  const handleDelete=async(itemId)=>{
+    const expense=expenses.find(e=>e.id===itemId);
+    if(!expense)return;
+    // Permission: superAdmin can delete anything, others can only delete their own Submitted
+    const isOwner=expense.SubmittedBy?.toLowerCase()===userEmail?.toLowerCase();
+    const canDelete=isSuperAdmin||(isOwner&&expense.Status==="Submitted");
+    if(!canDelete){setToast({message:"You don't have permission to delete this expense",type:"error"});return}
+    if(!confirm(`Delete this ${expense.ExpenseType} expense for ${fmtMoney(expense.Amount)}? This cannot be undone.`))return;
+    setActionLoading(true);
+    try{
+      await deleteExpense(itemId);
+      await deleteExpenseAttachments(itemId.toString());
+      await refresh();
+      setToast({message:"Expense deleted",type:"success"});
+      setViewExpense(null);
+    }catch(e){
+      setToast({message:`Delete failed: ${e.message}`,type:"error"});
+    }finally{setActionLoading(false)}
+  };
+
   // Admin save
   const handleAdminSave=async(newSettings,newUsers,newRouting)=>{
     setAdminSaving(true);
@@ -1138,6 +1219,8 @@ function ExpenseManager(){
   return <div style={{minHeight:"100vh",background:B.bg}}>
     {toast&&<Toast message={toast.message} type={toast.type} onClose={()=>setToast(null)}/>}
 
+    {settings.testMode&&<div style={{background:B.no,color:B.white,textAlign:"center",padding:"4px",fontSize:"10px",fontWeight:800,letterSpacing:"1px",textTransform:"uppercase"}}>{"\u26A0"} TEST MODE — All emails redirect to your inbox only {"\u26A0"}</div>}
+
     {/* Header */}
     <div style={{background:B.teal900,borderBottom:`2px solid ${B.gold}`,padding:"10px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}} className="no-print">
       <div>
@@ -1170,17 +1253,17 @@ function ExpenseManager(){
 
         {tab==="my"&&<ExpenseList expenses={expenses} title="My Expenses"
           filter={e=>e.SubmittedBy?.toLowerCase()===userEmail?.toLowerCase()}
-          userRole={userRole} userEmail={userEmail} onView={setViewExpense}/>}
+          userRole={userRole} userEmail={userEmail} onView={setViewExpense} onDelete={handleDelete} isSuperAdmin={isSuperAdmin}/>}
 
         {tab==="queue"&&isAdmin&&<>
           <ExpenseList expenses={expenses} title="Pending Approval" filter={e=>e.Status==="Submitted"}
-            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} actionLoading={actionLoading}/>
+            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
           <ExpenseList expenses={expenses} title="Approved — Awaiting Processing" filter={e=>e.Status==="Approved"}
-            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} actionLoading={actionLoading}/>
+            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
           <ExpenseList expenses={expenses} title="Pending Payment" filter={e=>e.Status==="Pending Payment"}
-            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} actionLoading={actionLoading}/>
+            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
           <ExpenseList expenses={expenses} title="Recently Completed" filter={e=>["Processed","Paid","Rejected"].includes(e.Status)}
-            userRole={userRole} userEmail={userEmail} onView={setViewExpense}/>
+            userRole={userRole} userEmail={userEmail} onView={setViewExpense} onDelete={handleDelete} isSuperAdmin={isSuperAdmin}/>
         </>}
 
         {tab==="queue"&&isAccounting&&<>
