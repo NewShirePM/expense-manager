@@ -36,7 +36,7 @@ const CONFIG={
   listName:"Expense Log",
   configListName:"Expense Config",
   googleMapsKey:"AIzaSyCgm0GDTAcsYUJtTVrZLR3xS8sazfqXxSY",
-  version:"1.3.0",
+  version:"1.3.1",
 };
 const GRAPH="https://graph.microsoft.com/v1.0";
 
@@ -663,9 +663,9 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel}){
         <label style={lCss}>Attachments ({files.length}/5)</label>
         <div style={{display:"flex",gap:"6px",marginTop:"4px"}}>
           <input ref={fileRef} type="file" accept="image/*,.pdf" multiple hidden onChange={e=>handleFiles(e.target.files)}/>
-          <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={e=>handleFiles(e.target.files)}/>
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={e=>{handleFiles(e.target.files);e.target.value=""}}/>
           <Btn v="small" onClick={()=>fileRef.current?.click()} disabled={files.length>=5}>📎 Upload</Btn>
-          <Btn v="small" onClick={()=>cameraRef.current?.click()} disabled={files.length>=5}>📷 Camera</Btn>
+          <Btn v="small" onClick={()=>{if(cameraRef.current){cameraRef.current.value="";cameraRef.current.click()}}} disabled={files.length>=5}>📷 Camera</Btn>
         </div>
         {files.length>0&&<div style={{marginTop:"6px",display:"flex",gap:"4px",flexWrap:"wrap"}}>
           {files.map((f,i)=>(
@@ -685,6 +685,159 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel}){
       </div>
     </>}
   </Card>;
+}
+
+// ============================================================
+// EXPENSE DETAIL MODAL
+// ============================================================
+function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isSuperAdmin,actionLoading,settings}){
+  const[attachments,setAttachments]=useState([]);
+  const[attLoading,setAttLoading]=useState(true);
+  const[previews,setPreviews]=useState({});// {fileId: blobUrl}
+  const[expandedImg,setExpandedImg]=useState(null);
+
+  const isCC=expense.ExpenseType==="Credit Card Reconciliation";
+  const isMileage=expense.ExpenseType==="Mileage";
+  const isOwner=expense.SubmittedBy?.toLowerCase()===userEmail?.toLowerCase();
+  const canDelete=isSuperAdmin||(isOwner&&expense.Status==="Submitted");
+  const lineItems=expense.LineItemsJSON?JSON.parse(expense.LineItemsJSON):[];
+  const mileStops=expense.MileageStopsJSON?JSON.parse(expense.MileageStopsJSON):[];
+  const mileProps=expense.MileagePropertiesJSON?JSON.parse(expense.MileagePropertiesJSON):[];
+
+  // Load attachments and generate inline previews
+  useEffect(()=>{
+    (async()=>{
+      setAttLoading(true);
+      try{
+        const files=await getAttachments(expense.id);
+        setAttachments(files);
+        // Generate blob URLs for image previews
+        const pvs={};
+        for(const f of files){
+          const ext=(f.name||"").toLowerCase();
+          if(ext.match(/\.(jpg|jpeg|png|gif|webp|bmp)$/)){
+            try{
+              const{base64,contentType}=await getAttachmentBase64(f.id);
+              pvs[f.id]=`data:${contentType};base64,${base64}`;
+            }catch(e){}
+          }
+        }
+        setPreviews(pvs);
+      }catch(e){console.warn("Attachment load failed:",e)}
+      finally{setAttLoading(false)}
+    })();
+  },[expense.id]);
+
+  const row=(label,value,opts={})=>value?<div style={{display:"flex",borderBottom:`1px solid ${B.teal700}`,padding:"6px 0"}}>
+    <span style={{fontSize:"11px",color:B.teal400,width:"130px",flexShrink:0,fontWeight:600}}>{label}</span>
+    <span style={{fontSize:"12px",color:opts.color||B.text,fontWeight:opts.bold?800:400,...(opts.style||{})}}>{value}</span>
+  </div>:null;
+
+  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}} onClick={onClose}>
+    <div style={{background:B.teal700,border:`1px solid ${B.teal600}`,borderRadius:"8px",maxWidth:"700px",width:"100%",maxHeight:"90vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}>
+
+      {/* Header */}
+      <div style={{background:B.teal900,padding:"12px 16px",borderBottom:`2px solid ${STATUS_COLORS[expense.Status]||B.teal600}`,display:"flex",justifyContent:"space-between",alignItems:"center",borderRadius:"8px 8px 0 0"}}>
+        <div>
+          <StatusBadge status={expense.Status}/>
+          <span style={{fontSize:"14px",fontWeight:800,color:B.text,marginLeft:"8px"}}>{expense.ExpenseType}</span>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+          <span style={{fontSize:"20px",fontWeight:900,color:B.gold}}>{fmtMoney(expense.Amount)}</span>
+          <button onClick={onClose} style={{background:"none",border:"none",color:B.teal400,cursor:"pointer",fontSize:"18px",fontWeight:700}}>{"\u00d7"}</button>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div style={{padding:"16px"}}>
+        {row("Date",fmtDate(expense.ExpenseDate))}
+        {row("Submitted By",expense.SubmittedByName||expense.SubmittedBy)}
+        {!isMileage&&row("Vendor",expense.Vendor)}
+        {row("Category",expense.Category)}
+        {row("Description",expense.Description)}
+        {expense.Tax>0&&row("Tax",fmtMoney(expense.Tax))}
+        {expense.Tip>0&&row("Tip",fmtMoney(expense.Tip))}
+        {expense.CardLast4&&row("Card",`\u2022\u2022\u2022\u2022 ${expense.CardLast4}`)}
+        {expense.Property&&row("Property",expense.Property)}
+        {expense.SFAddress&&row("SF Address",expense.SFAddress)}
+        {isMileage&&<>
+          {row("Miles",`${expense.Miles} mi @ $${(expense.MileageRate||0.70).toFixed(2)}/mi`)}
+          {mileStops.length>0&&row("Route",mileStops.join(" \u2192 "))}
+          {mileProps.length>0&&row("Properties Visited",mileProps.join(", "))}
+        </>}
+        {expense.ApprovedBy&&row("Reviewed By",expense.ApprovedBy)}
+        {expense.ApprovedDate&&row("Reviewed",fmtDate(expense.ApprovedDate))}
+        {expense.ProcessedBy&&row("Processed By",expense.ProcessedBy)}
+        {expense.ProcessedDate&&row("Processed",fmtDate(expense.ProcessedDate))}
+        {expense.RejectionNotes&&row("Rejection Reason",expense.RejectionNotes,{color:B.no,bold:true})}
+
+        {/* Line Items */}
+        {lineItems.length>0&&<div style={{marginTop:"12px"}}>
+          <div style={{fontSize:"10px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"6px"}}>Line Items</div>
+          <div style={{background:B.teal900,borderRadius:"6px",overflow:"hidden",border:`1px solid ${B.teal600}`}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1.5fr 1fr auto",gap:"0",background:B.teal800}}>
+              <span style={{fontSize:"9px",fontWeight:700,color:B.teal400,padding:"6px 8px",textTransform:"uppercase"}}>Category</span>
+              <span style={{fontSize:"9px",fontWeight:700,color:B.teal400,padding:"6px 8px",textTransform:"uppercase"}}>Description</span>
+              <span style={{fontSize:"9px",fontWeight:700,color:B.teal400,padding:"6px 8px",textTransform:"uppercase"}}>Property</span>
+              <span style={{fontSize:"9px",fontWeight:700,color:B.teal400,padding:"6px 8px",textTransform:"uppercase",textAlign:"right"}}>Amount</span>
+            </div>
+            {lineItems.map((li,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1.5fr 1fr auto",gap:"0",borderTop:`1px solid ${B.teal700}`}}>
+              <span style={{fontSize:"11px",color:B.teal200,padding:"5px 8px"}}>{li.category||"\u2014"}</span>
+              <span style={{fontSize:"11px",color:B.text,padding:"5px 8px"}}>{li.description||"\u2014"}</span>
+              <span style={{fontSize:"11px",color:B.teal200,padding:"5px 8px"}}>{li.property||"\u2014"}{li.sfAddress?` (${li.sfAddress})`:""}</span>
+              <span style={{fontSize:"12px",fontWeight:700,color:B.gold,padding:"5px 8px",textAlign:"right"}}>{fmtMoney(li.amount)}</span>
+            </div>)}
+          </div>
+        </div>}
+
+        {/* Attachments — inline preview */}
+        {!isMileage&&<div style={{marginTop:"12px"}}>
+          <div style={{fontSize:"10px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"6px"}}>Attachments</div>
+          {attLoading?<div style={{fontSize:"11px",color:B.teal400}}>Loading attachments...</div>:
+           attachments.length===0?<div style={{fontSize:"11px",color:B.teal400}}>No attachments</div>:
+           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:"8px"}}>
+             {attachments.map(f=>{
+               const isImg=previews[f.id];
+               const isPdf=(f.name||"").toLowerCase().endsWith(".pdf");
+               return <div key={f.id} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"6px",overflow:"hidden"}}>
+                 {isImg?<img src={previews[f.id]} alt={f.name} onClick={()=>setExpandedImg(previews[f.id])} style={{width:"100%",height:"120px",objectFit:"cover",cursor:"pointer",display:"block"}}/>
+                  :isPdf?<div style={{height:"120px",display:"flex",alignItems:"center",justifyContent:"center",background:B.teal800}}>
+                    <a href={f.webUrl} target="_blank" rel="noopener" style={{color:B.gold,fontSize:"24px",textDecoration:"none"}} onClick={e=>e.stopPropagation()}>PDF</a>
+                  </div>
+                  :<div style={{height:"120px",display:"flex",alignItems:"center",justifyContent:"center",background:B.teal800}}>
+                    <a href={f.webUrl} target="_blank" rel="noopener" style={{color:B.teal300,fontSize:"11px",textDecoration:"underline"}} onClick={e=>e.stopPropagation()}>Open File</a>
+                  </div>}
+                 <div style={{padding:"4px 6px",fontSize:"9px",color:B.teal400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+               </div>;
+             })}
+           </div>}
+        </div>}
+
+        {/* Expanded image lightbox */}
+        {expandedImg&&<div onClick={()=>setExpandedImg(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
+          <img src={expandedImg} style={{maxWidth:"90vw",maxHeight:"90vh",borderRadius:"8px",boxShadow:"0 4px 30px rgba(0,0,0,0.5)"}} alt="Attachment preview"/>
+        </div>}
+
+        {/* Actions */}
+        <div style={{marginTop:"16px",display:"flex",gap:"8px",justifyContent:"flex-end",flexWrap:"wrap",borderTop:`1px solid ${B.teal600}`,paddingTop:"12px"}}>
+          {userRole==="admin"&&expense.Status==="Submitted"&&onAction&&<>
+            <Btn style={{background:B.ok}} onClick={()=>onAction(expense.id,"approve")} disabled={actionLoading}>{"\u2713"} Approve</Btn>
+            <Btn style={{background:B.no}} onClick={()=>{const n=prompt("Rejection reason (optional):");if(n!==null)onAction(expense.id,"reject",n)}} disabled={actionLoading}>{"\u2717"} Reject</Btn>
+          </>}
+          {(userRole==="admin"||userRole==="accounting")&&expense.Status==="Approved"&&onAction&&
+            <Btn style={{background:"#6A8EC8"}} onClick={()=>onAction(expense.id,"process")} disabled={actionLoading}>{isCC?"$ Mark Processed":"$ Pending Payment"}</Btn>
+          }
+          {userRole==="admin"&&expense.Status==="Pending Payment"&&onAction&&
+            <Btn style={{background:B.ok}} onClick={()=>onAction(expense.id,"paid")} disabled={actionLoading}>{"\u2713"} Mark Paid</Btn>
+          }
+          {canDelete&&onDelete&&
+            <Btn style={{background:"transparent",border:`1px solid ${B.no}`,color:B.no}} onClick={()=>onDelete(expense.id)} disabled={actionLoading}>{"\u2716"} Delete</Btn>
+          }
+          <Btn v="secondary" onClick={onClose}>Close</Btn>
+        </div>
+      </div>
+    </div>
+  </div>;
 }
 
 // ============================================================
@@ -1219,13 +1372,22 @@ function ExpenseManager(){
   return <div style={{minHeight:"100vh",background:B.bg}}>
     {toast&&<Toast message={toast.message} type={toast.type} onClose={()=>setToast(null)}/>}
 
+    {/* Expense Detail Modal */}
+    {viewExpense&&<ExpenseDetail expense={viewExpense} onClose={()=>setViewExpense(null)}
+      onAction={handleAction} onDelete={handleDelete}
+      userRole={userRole} userEmail={userEmail} isSuperAdmin={isSuperAdmin}
+      actionLoading={actionLoading} settings={settings}/>}
+
     {settings.testMode&&<div style={{background:B.no,color:B.white,textAlign:"center",padding:"4px",fontSize:"10px",fontWeight:800,letterSpacing:"1px",textTransform:"uppercase"}}>{"\u26A0"} TEST MODE — All emails redirect to your inbox only {"\u26A0"}</div>}
 
     {/* Header */}
     <div style={{background:B.teal900,borderBottom:`2px solid ${B.gold}`,padding:"10px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}} className="no-print">
       <div>
         <div style={{fontSize:"9px",fontWeight:800,textTransform:"uppercase",letterSpacing:"2px",color:B.gold}}>NewShire Property Management</div>
-        <div style={{fontSize:"16px",fontWeight:900,color:B.text}}>Expense Manager</div>
+        <div style={{display:"flex",alignItems:"baseline",gap:"6px"}}>
+          <span style={{fontSize:"16px",fontWeight:900,color:B.text}}>Expense Manager</span>
+          <span style={{fontSize:"9px",fontWeight:600,color:B.teal500}}>v{CONFIG.version}</span>
+        </div>
       </div>
       <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
         {tabs.map(t=>(
