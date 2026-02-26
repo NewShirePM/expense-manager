@@ -7,13 +7,13 @@
 <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700;800;900&family=Source+Code+Pro:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Source Sans 3','Segoe UI',sans-serif;background:#1C3740;color:#E8ECEE}
+body{font-family:'Source Sans 3','Segoe UI',sans-serif;background:#F7F8F7;color:#28434C}
 #root{min-height:100vh}
 input,select,textarea,button{font-family:inherit}
 ::-webkit-scrollbar{width:6px;height:6px}
-::-webkit-scrollbar-track{background:#15292F}
-::-webkit-scrollbar-thumb{background:#3D6B7B;border-radius:3px}
-::placeholder{color:#5A8A9A}
+::-webkit-scrollbar-track{background:#EDF4F7}
+::-webkit-scrollbar-thumb{background:#A8B0B0;border-radius:3px}
+::placeholder{color:#A8B0B0}
 @media print{body{background:#fff!important}.no-print{display:none!important}}
 </style>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -36,7 +36,7 @@ const CONFIG={
   listName:"Expense Log",
   configListName:"Expense Config",
   googleMapsKey:"AIzaSyCgm0GDTAcsYUJtTVrZLR3xS8sazfqXxSY",
-  version:"1.4.0",
+  version:"2.0.0",
 };
 const GRAPH="https://graph.microsoft.com/v1.0";
 
@@ -46,7 +46,7 @@ const GRAPH="https://graph.microsoft.com/v1.0";
 const ROLES={ADMIN:"admin",ACCOUNTING:"accounting",EMPLOYEE:"employee"};
 const ROLE_LABELS={admin:"Admin",accounting:"Accounting",employee:"Employee"};
 const STATUS={DRAFT:"Draft",SUBMITTED:"Submitted",APPROVED:"Approved",REJECTED:"Rejected",PENDING_PAYMENT:"Pending Payment",PROCESSED:"Processed",PAID:"Paid"};
-const STATUS_COLORS={Draft:"#6FA0B0",Submitted:"#CDA04B",Approved:"#3DA06B",Rejected:"#D35B4B","Pending Payment":"#6A8EC8",Processed:"#6A8EC8",Paid:"#3DA06B"};
+const STATUS_COLORS={Draft:"#7A8585",Submitted:"#D4960A",Approved:"#2D8A5A",Rejected:"#C44B3B","Pending Payment":"#4A78B0",Processed:"#4A78B0",Paid:"#2D8A5A"};
 
 const DEFAULT_CATEGORIES=["Office Supplies","Travel","Meals/Entertainment","Software/Subscriptions","Maintenance/Repairs","Marketing","Professional Development","Vehicle/Fuel","Other"];
 const DEFAULT_EXPENSE_TYPES=["Personal Reimbursement","Mileage","Credit Card Reconciliation"];
@@ -78,12 +78,14 @@ const DEFAULT_ROUTING={
 // BRAND TOKENS
 // ============================================================
 const B={
-  bg:"#1C3740",card:"#1E3A44",cardAlt:"#1A3440",
-  teal900:"#15292F",teal800:"#1A3440",teal700:"#1E3A44",teal600:"#2A5262",teal500:"#3D6B7B",teal400:"#4A7E91",teal300:"#6FA0B0",teal200:"#A3C5D0",teal100:"#D0E1E8",
+  bg:"#F7F8F7",card:"#FFFFFF",cardAlt:"#F7F8F7",
+  teal900:"#1C3740",teal800:"#213F4A",teal700:"#28434C",teal600:"#D0D8DC",teal500:"#3A6577",teal400:"#7A8585",teal300:"#A8B0B0",teal200:"#D0D8DC",teal100:"#D6E7EC",
   gold:"#CDA04B",goldLight:"#E8CC7A",goldDim:"#9E7B2F",
-  text:"#E8ECEE",textMuted:"#8BA8B4",textDim:"#5A8A9A",
-  ok:"#3DA06B",no:"#D35B4B",white:"#FFFFFF",
-  border:"#2A5262",inputBg:"#15292F",inputBorder:"#2A5262",
+  text:"#28434C",textMuted:"#7A8585",textDim:"#A8B0B0",
+  ok:"#2D8A5A",no:"#C44B3B",white:"#FFFFFF",
+  border:"#D0D8DC",inputBg:"#FFFFFF",inputBorder:"#D0D8DC",
+  // Light theme extras
+  pageBg:"#F7F8F7",teal50:"#EDF4F7",gray100:"#E8EAEA",gray200:"#D0D8DC",gold100:"#F8F0DB",gold50:"#FFFBF0",
 };
 const fb="'Source Sans 3','Segoe UI',sans-serif";
 
@@ -312,20 +314,20 @@ async function sendNotificationEmail(expense,action,{routing,settings,users,appr
 // ============================================================
 // UI COMPONENTS
 // ============================================================
-const lCss={display:"block",fontSize:"9px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.8px",color:B.teal300,marginBottom:"3px"};
+const lCss={display:"block",fontSize:"9px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.8px",color:B.teal700,marginBottom:"3px"};
 
 function Card({children,style,...props}){
-  return <div style={{background:B.card,borderRadius:"8px",border:`1px solid ${B.border}`,padding:"16px",...style}} {...props}>{children}</div>;
+  return <div style={{background:B.card,borderRadius:"8px",border:`1px solid ${B.border}`,padding:"16px",boxShadow:"0 1px 3px rgba(28,55,64,0.06)",...style}} {...props}>{children}</div>;
 }
 
 function Btn({children,v="primary",disabled,style,...props}){
   const base={fontFamily:fb,fontWeight:700,fontSize:"11px",border:"none",borderRadius:"4px",cursor:disabled?"not-allowed":"pointer",padding:"7px 16px",letterSpacing:"0.3px",opacity:disabled?0.5:1,transition:"all 0.15s"};
   const variants={
-    primary:{...base,background:B.gold,color:"#1C3740"},
-    secondary:{...base,background:B.teal600,color:B.teal100},
+    primary:{...base,background:B.teal900,color:B.white},
+    secondary:{...base,background:B.white,color:B.teal700,border:`1px solid ${B.teal100}`},
     danger:{...base,background:B.no,color:B.white},
-    ghost:{...base,background:"transparent",color:B.teal300,padding:"7px 10px"},
-    small:{...base,background:B.teal600,color:B.teal200,fontSize:"10px",padding:"4px 10px"},
+    ghost:{...base,background:"transparent",color:B.teal500,padding:"7px 10px"},
+    small:{...base,background:B.teal50,color:B.teal700,fontSize:"10px",padding:"4px 10px",border:`1px solid ${B.teal100}`},
   };
   return <button style={{...variants[v],...style}} disabled={disabled} {...props}>{children}</button>;
 }
@@ -340,9 +342,14 @@ function F({label,children,required,style}){
 const inputStyle={
   width:"100%",padding:"7px 10px",background:B.inputBg,border:`1px solid ${B.inputBorder}`,
   borderRadius:"4px",color:B.text,fontSize:"12px",fontFamily:fb,outline:"none",
+  transition:"border-color 0.2s, box-shadow 0.2s",
 };
 
-function Inp({style,...props}){return <input style={{...inputStyle,...style}} {...props}/>}
+function Inp({style,...props}){
+  const[f,setF]=useState(false);
+  return <input style={{...inputStyle,...(f?{borderColor:"#D4AF61",boxShadow:"0 0 0 3px rgba(205,160,75,0.15)"}:{}),...style}}
+    onFocus={e=>{setF(true);props.onFocus&&props.onFocus(e)}} onBlur={e=>{setF(false);props.onBlur&&props.onBlur(e)}} {...props}/>
+}
 
 function Sel({options,placeholder,style,...props}){
   return <select style={{...inputStyle,cursor:"pointer",...style}} {...props}>
@@ -354,13 +361,14 @@ function Sel({options,placeholder,style,...props}){
 function Txt({style,...props}){return <textarea style={{...inputStyle,minHeight:"60px",resize:"vertical",...style}} {...props}/>}
 
 function StatusBadge({status}){
-  return <span style={{display:"inline-block",padding:"2px 8px",borderRadius:"3px",fontSize:"9px",fontWeight:800,textTransform:"uppercase",letterSpacing:"0.5px",background:STATUS_COLORS[status]||B.teal600,color:status==="Submitted"?"#1C3740":B.white}}>{status}</span>;
+  const bgMap={Draft:"rgba(122,133,133,0.08)",Submitted:"rgba(212,150,10,0.08)",Approved:"rgba(45,138,90,0.08)",Rejected:"rgba(196,75,59,0.06)","Pending Payment":"rgba(74,120,176,0.08)",Processed:"rgba(74,120,176,0.08)",Paid:"rgba(45,138,90,0.08)"};
+  return <span style={{display:"inline-block",padding:"2px 8px",borderRadius:"9999px",fontSize:"9px",fontWeight:800,textTransform:"uppercase",letterSpacing:"0.5px",background:bgMap[status]||"rgba(122,133,133,0.08)",color:STATUS_COLORS[status]||B.teal400}}>{status}</span>;
 }
 
 function Toast({message,type="info",onClose}){
   if(!message)return null;
-  const bg={info:B.teal600,success:B.ok,error:B.no}[type]||B.teal600;
-  return <div style={{position:"fixed",top:"16px",right:"16px",background:bg,color:B.white,padding:"10px 20px",borderRadius:"6px",fontSize:"12px",fontWeight:600,zIndex:9999,boxShadow:"0 4px 20px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:"10px",maxWidth:"400px"}}>
+  const bg={info:B.teal900,success:B.ok,error:B.no}[type]||B.teal900;
+  return <div style={{position:"fixed",top:"16px",right:"16px",background:bg,color:B.white,padding:"10px 20px",borderRadius:"6px",fontSize:"12px",fontWeight:600,zIndex:9999,boxShadow:"0 4px 20px rgba(28,55,64,0.18)",display:"flex",alignItems:"center",gap:"10px",maxWidth:"400px"}}>
     <span>{message}</span>
     <button onClick={onClose} style={{background:"none",border:"none",color:B.white,cursor:"pointer",fontSize:"16px",lineHeight:1}}>×</button>
   </div>;
@@ -561,11 +569,11 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense}){
 
   return <Card>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}}>
-      <h3 style={{fontSize:"14px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"1px"}}>{isEdit?"Edit Expense":"Submit Expense"}</h3>
+      <h3 style={{fontSize:"14px",fontWeight:800,color:B.teal700,textTransform:"uppercase",letterSpacing:"1px"}}>{isEdit?"Edit Expense":"Submit Expense"}</h3>
       {onCancel&&<Btn v="ghost" onClick={onCancel}>← Back</Btn>}
     </div>
 
-    {error&&<div style={{background:"rgba(211,91,75,0.15)",border:`1px solid ${B.no}`,borderRadius:"4px",padding:"8px 12px",marginBottom:"10px",fontSize:"11px",color:B.no,fontWeight:600}}>{error}</div>}
+    {error&&<div style={{background:"rgba(196,75,59,0.06)",border:`1px solid rgba(196,75,59,0.25)`,borderRadius:"4px",padding:"8px 12px",marginBottom:"10px",fontSize:"11px",color:B.no,fontWeight:600}}>{error}</div>}
 
     {/* Expense Type */}
     <F label="Expense Type" required>
@@ -589,7 +597,7 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense}){
           <Btn v="small" onClick={addLine}>+ Add Line</Btn>
         </div>
         {lineItems.map((li,idx)=>(
-          <div key={idx} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"6px",padding:"8px",marginBottom:"6px",position:"relative"}}>
+          <div key={idx} style={{background:B.teal50,border:`1px solid ${B.teal100}`,borderRadius:"6px",padding:"8px",marginBottom:"6px",position:"relative"}}>
             {lineItems.length>1&&<button onClick={()=>removeLine(idx)} style={{position:"absolute",top:"4px",right:"6px",background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"14px",fontWeight:700}}>×</button>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 2fr 80px",gap:"6px",marginBottom:"4px"}}>
               <Sel value={li.category} onChange={e=>updateLine(idx,"category",e.target.value)} options={cats} placeholder="Category" style={{fontSize:"11px",padding:"5px 6px"}}/>
@@ -612,12 +620,12 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense}){
           <F label="Tax"><Inp type="number" value={tax} onChange={e=>setTax(e.target.value)} placeholder="$0.00" step="0.01" min="0"/></F>
           <F label="Tip"><Inp type="number" value={tip} onChange={e=>setTip(e.target.value)} placeholder="$0.00" step="0.01" min="0"/></F>
           <F label="Grand Total">
-            <div style={{padding:"7px 10px",background:B.teal900,border:`1px solid ${B.gold}`,borderRadius:"4px",fontSize:"14px",fontWeight:800,color:B.gold,textAlign:"right"}}>{fmtMoney(grandTotal)}</div>
+            <div style={{padding:"7px 10px",background:B.gold50,border:`1px solid ${B.gold}`,borderRadius:"4px",fontSize:"14px",fontWeight:800,color:B.goldDim,textAlign:"right"}}>{fmtMoney(grandTotal)}</div>
           </F>
         </div>
 
         {/* Tax allocation preview */}
-        {taxNum>0&&taxableSum>0&&<div style={{background:B.teal900,borderRadius:"4px",padding:"6px 8px",marginTop:"4px",fontSize:"10px",color:B.teal300}}>
+        {taxNum>0&&taxableSum>0&&<div style={{background:B.teal50,borderRadius:"4px",padding:"6px 8px",marginTop:"4px",fontSize:"10px",color:B.teal500}}>
           <span style={{fontWeight:700}}>Tax allocation:</span>{" "}
           {lineItems.filter(l=>l.taxable&&parseFloat(l.amount)>0).map((l,i,arr)=>{
             const pct=(parseFloat(l.amount)||0)/taxableSum;
@@ -643,14 +651,14 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense}){
             {calculating?"Calculating...":"🗺️ Calculate Route"}
           </Btn>
         </div>
-        {routeInfo&&<div style={{background:B.teal900,borderRadius:"4px",padding:"6px 8px",marginBottom:"8px",fontSize:"11px",color:B.ok,fontWeight:600}}>
+        {routeInfo&&<div style={{background:"rgba(45,138,90,0.08)",borderRadius:"4px",padding:"6px 8px",marginBottom:"8px",fontSize:"11px",color:B.ok,fontWeight:600}}>
           ✓ Route: {routeInfo.miles} mi • ~{routeInfo.duration}{routeInfo.legs>1?` • ${routeInfo.legs} legs`:""}
         </div>}
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px"}}>
           <F label="Miles"><Inp type="number" value={miles} onChange={e=>setMiles(e.target.value)} placeholder="0.0" step="0.1" min="0"/></F>
           <F label={`Rate ($${(s.mileageRate||0.70).toFixed(2)}/mi)`}>
-            <div style={{...inputStyle,background:B.teal800,color:B.teal300}}>{fmtMoney(mileageTotal)}</div>
+            <div style={{...inputStyle,background:B.teal50,color:B.teal700}}>{fmtMoney(mileageTotal)}</div>
           </F>
           <F label="Category"><Sel value={mileCategory} onChange={e=>setMileCategory(e.target.value)} options={cats}/></F>
         </div>
@@ -661,8 +669,8 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense}){
           <div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginTop:"4px"}}>
             {props.map(p=>(
               <button key={p} onClick={()=>setMileProperties(prev=>prev.includes(p)?prev.filter(x=>x!==p):[...prev,p])}
-                style={{background:mileProperties.includes(p)?B.teal700:B.teal900,color:mileProperties.includes(p)?B.gold:B.teal400,
-                  border:`1px solid ${mileProperties.includes(p)?B.gold:B.teal600}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",fontWeight:600,cursor:"pointer"}}>
+                style={{background:mileProperties.includes(p)?B.gold50:"transparent",color:mileProperties.includes(p)?B.goldDim:B.teal400,
+                  border:`1px solid ${mileProperties.includes(p)?B.gold:B.border}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",fontWeight:600,cursor:"pointer"}}>
                 {mileProperties.includes(p)?"✓ ":""}{p}
               </button>
             ))}
@@ -692,7 +700,7 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense}){
         </div>
         {files.length>0&&<div style={{marginTop:"6px",display:"flex",gap:"4px",flexWrap:"wrap"}}>
           {files.map((f,i)=>(
-            <div key={i} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.teal200,display:"flex",alignItems:"center",gap:"6px"}}>
+            <div key={i} style={{background:B.teal50,border:`1px solid ${B.teal100}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.teal700,display:"flex",alignItems:"center",gap:"6px"}}>
               <span>{f.name.length>20?f.name.slice(0,18)+"...":f.name}</span>
               <span style={{color:B.teal400}}>({(f.size/1024).toFixed(0)}KB)</span>
               <button onClick={()=>removeFile(i)} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"12px"}}>×</button>
@@ -705,7 +713,7 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense}){
       {isEdit&&existingAttachments.length>0&&!isMileage&&<div style={{marginTop:"8px"}}>
         <label style={lCss}>Current Attachments</label>
         <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>
-          {existingAttachments.map(a=><span key={a.id} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.teal200}}>
+          {existingAttachments.map(a=><span key={a.id} style={{background:B.teal50,border:`1px solid ${B.teal100}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.teal700}}>
             {"\uD83D\uDCCE"} {a.name}
           </span>)}
         </div>
@@ -762,23 +770,23 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
     })();
   },[expense.id]);
 
-  const row=(label,value,opts={})=>value?<div style={{display:"flex",borderBottom:`1px solid ${B.teal700}`,padding:"6px 0"}}>
+  const row=(label,value,opts={})=>value?<div style={{display:"flex",borderBottom:`1px solid ${B.gray100}`,padding:"6px 0"}}>
     <span style={{fontSize:"11px",color:B.teal400,width:"130px",flexShrink:0,fontWeight:600}}>{label}</span>
     <span style={{fontSize:"12px",color:opts.color||B.text,fontWeight:opts.bold?800:400,...(opts.style||{})}}>{value}</span>
   </div>:null;
 
-  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}} onClick={onClose}>
-    <div style={{background:B.teal700,border:`1px solid ${B.teal600}`,borderRadius:"8px",maxWidth:"700px",width:"100%",maxHeight:"90vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}>
+  return <div style={{position:"fixed",inset:0,background:"rgba(28,55,64,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}} onClick={onClose}>
+    <div style={{background:B.white,border:`1px solid ${B.border}`,borderRadius:"8px",maxWidth:"700px",width:"100%",maxHeight:"90vh",overflow:"auto",boxShadow:"0 8px 24px rgba(28,55,64,0.18)"}} onClick={e=>e.stopPropagation()}>
 
       {/* Header */}
-      <div style={{background:B.teal900,padding:"12px 16px",borderBottom:`2px solid ${STATUS_COLORS[expense.Status]||B.teal600}`,display:"flex",justifyContent:"space-between",alignItems:"center",borderRadius:"8px 8px 0 0"}}>
+      <div style={{background:B.teal900,padding:"12px 16px",borderBottom:`2px solid ${STATUS_COLORS[expense.Status]||B.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",borderRadius:"8px 8px 0 0"}}>
         <div>
           <StatusBadge status={expense.Status}/>
-          <span style={{fontSize:"14px",fontWeight:800,color:B.text,marginLeft:"8px"}}>{expense.ExpenseType}</span>
+          <span style={{fontSize:"14px",fontWeight:800,color:B.white,marginLeft:"8px"}}>{expense.ExpenseType}</span>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
           <span style={{fontSize:"20px",fontWeight:900,color:B.gold}}>{fmtMoney(expense.Amount)}</span>
-          <button onClick={onClose} style={{background:"none",border:"none",color:B.teal400,cursor:"pointer",fontSize:"18px",fontWeight:700}}>{"\u00d7"}</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"rgba(255,255,255,0.6)",cursor:"pointer",fontSize:"18px",fontWeight:700}}>{"\u00d7"}</button>
         </div>
       </div>
 
@@ -807,39 +815,39 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
 
         {/* Line Items */}
         {lineItems.length>0&&<div style={{marginTop:"12px"}}>
-          <div style={{fontSize:"10px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"6px"}}>Line Items</div>
-          <div style={{background:B.teal900,borderRadius:"6px",overflow:"hidden",border:`1px solid ${B.teal600}`}}>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1.5fr 1fr auto",gap:"0",background:B.teal800}}>
-              <span style={{fontSize:"9px",fontWeight:700,color:B.teal400,padding:"6px 8px",textTransform:"uppercase"}}>Category</span>
-              <span style={{fontSize:"9px",fontWeight:700,color:B.teal400,padding:"6px 8px",textTransform:"uppercase"}}>Description</span>
-              <span style={{fontSize:"9px",fontWeight:700,color:B.teal400,padding:"6px 8px",textTransform:"uppercase"}}>Property</span>
-              <span style={{fontSize:"9px",fontWeight:700,color:B.teal400,padding:"6px 8px",textTransform:"uppercase",textAlign:"right"}}>Amount</span>
+          <div style={{fontSize:"10px",fontWeight:800,color:B.goldDim,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"6px"}}>Line Items</div>
+          <div style={{background:B.teal50,borderRadius:"6px",overflow:"hidden",border:`1px solid ${B.teal100}`}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1.5fr 1fr auto",gap:"0",background:B.teal50}}>
+              <span style={{fontSize:"9px",fontWeight:700,color:B.teal700,padding:"6px 8px",textTransform:"uppercase"}}>Category</span>
+              <span style={{fontSize:"9px",fontWeight:700,color:B.teal700,padding:"6px 8px",textTransform:"uppercase"}}>Description</span>
+              <span style={{fontSize:"9px",fontWeight:700,color:B.teal700,padding:"6px 8px",textTransform:"uppercase"}}>Property</span>
+              <span style={{fontSize:"9px",fontWeight:700,color:B.teal700,padding:"6px 8px",textTransform:"uppercase",textAlign:"right"}}>Amount</span>
             </div>
-            {lineItems.map((li,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1.5fr 1fr auto",gap:"0",borderTop:`1px solid ${B.teal700}`}}>
-              <span style={{fontSize:"11px",color:B.teal200,padding:"5px 8px"}}>{li.category||"\u2014"}</span>
+            {lineItems.map((li,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1.5fr 1fr auto",gap:"0",borderTop:`1px solid ${B.teal100}`}}>
+              <span style={{fontSize:"11px",color:B.teal400,padding:"5px 8px"}}>{li.category||"\u2014"}</span>
               <span style={{fontSize:"11px",color:B.text,padding:"5px 8px"}}>{li.description||"\u2014"}</span>
-              <span style={{fontSize:"11px",color:B.teal200,padding:"5px 8px"}}>{li.property||"\u2014"}{li.sfAddress?` (${li.sfAddress})`:""}</span>
-              <span style={{fontSize:"12px",fontWeight:700,color:B.gold,padding:"5px 8px",textAlign:"right"}}>{fmtMoney(li.amount)}</span>
+              <span style={{fontSize:"11px",color:B.teal400,padding:"5px 8px"}}>{li.property||"\u2014"}{li.sfAddress?` (${li.sfAddress})`:""}</span>
+              <span style={{fontSize:"12px",fontWeight:700,color:B.goldDim,padding:"5px 8px",textAlign:"right"}}>{fmtMoney(li.amount)}</span>
             </div>)}
           </div>
         </div>}
 
         {/* Attachments — inline preview */}
         {!isMileage&&<div style={{marginTop:"12px"}}>
-          <div style={{fontSize:"10px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"6px"}}>Attachments</div>
+          <div style={{fontSize:"10px",fontWeight:800,color:B.goldDim,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"6px"}}>Attachments</div>
           {attLoading?<div style={{fontSize:"11px",color:B.teal400}}>Loading attachments...</div>:
            attachments.length===0?<div style={{fontSize:"11px",color:B.teal400}}>No attachments</div>:
            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:"8px"}}>
              {attachments.map(f=>{
                const isImg=previews[f.id];
                const isPdf=(f.name||"").toLowerCase().endsWith(".pdf");
-               return <div key={f.id} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"6px",overflow:"hidden"}}>
+               return <div key={f.id} style={{background:B.pageBg,border:`1px solid ${B.border}`,borderRadius:"6px",overflow:"hidden"}}>
                  {isImg?<img src={previews[f.id]} alt={f.name} onClick={()=>setExpandedImg(previews[f.id])} style={{width:"100%",height:"120px",objectFit:"cover",cursor:"pointer",display:"block"}}/>
-                  :isPdf?<div style={{height:"120px",display:"flex",alignItems:"center",justifyContent:"center",background:B.teal800}}>
-                    <a href={f.webUrl} target="_blank" rel="noopener" style={{color:B.gold,fontSize:"24px",textDecoration:"none"}} onClick={e=>e.stopPropagation()}>PDF</a>
+                  :isPdf?<div style={{height:"120px",display:"flex",alignItems:"center",justifyContent:"center",background:B.teal50}}>
+                    <a href={f.webUrl} target="_blank" rel="noopener" style={{color:B.goldDim,fontSize:"24px",textDecoration:"none"}} onClick={e=>e.stopPropagation()}>PDF</a>
                   </div>
-                  :<div style={{height:"120px",display:"flex",alignItems:"center",justifyContent:"center",background:B.teal800}}>
-                    <a href={f.webUrl} target="_blank" rel="noopener" style={{color:B.teal300,fontSize:"11px",textDecoration:"underline"}} onClick={e=>e.stopPropagation()}>Open File</a>
+                  :<div style={{height:"120px",display:"flex",alignItems:"center",justifyContent:"center",background:B.teal50}}>
+                    <a href={f.webUrl} target="_blank" rel="noopener" style={{color:B.teal500,fontSize:"11px",textDecoration:"underline"}} onClick={e=>e.stopPropagation()}>Open File</a>
                   </div>}
                  <div style={{padding:"4px 6px",fontSize:"9px",color:B.teal400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
                </div>;
@@ -882,14 +890,14 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,o
   if(filtered.length===0)return <Card style={{marginBottom:"8px"}}><div style={{fontSize:"11px",color:B.teal400,textAlign:"center",padding:"8px"}}>{title}: None</div></Card>;
   const isCC=(exp)=>exp.ExpenseType==="Credit Card Reconciliation";
   return <Card style={{marginBottom:"8px"}}>
-    <h4 style={{fontSize:"11px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"0.8px",marginBottom:"8px"}}>{title} ({filtered.length})</h4>
+    <h4 style={{fontSize:"11px",fontWeight:800,color:B.teal700,textTransform:"uppercase",letterSpacing:"0.8px",marginBottom:"8px",borderBottom:`2px solid ${B.gold}`,paddingBottom:"6px",display:"inline-block"}}>{title} ({filtered.length})</h4>
     {filtered.map(exp=>{
       const isOwner=exp.SubmittedBy?.toLowerCase()===userEmail?.toLowerCase();
       const canDelete=isSuperAdmin||(isOwner&&exp.Status==="Submitted");
       return(
-      <div key={exp.id} onClick={()=>onView&&onView(exp)} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"6px",padding:"8px 10px",marginBottom:"4px",cursor:"pointer",transition:"background 0.15s"}}
-        onMouseEnter={e=>e.currentTarget.style.background="rgba(205,160,75,0.06)"}
-        onMouseLeave={e=>e.currentTarget.style.background=B.teal900}>
+      <div key={exp.id} onClick={()=>onView&&onView(exp)} style={{background:B.white,border:`1px solid ${B.border}`,borderRadius:"6px",padding:"8px 10px",marginBottom:"4px",cursor:"pointer",transition:"background 0.15s"}}
+        onMouseEnter={e=>e.currentTarget.style.background=B.teal50}
+        onMouseLeave={e=>e.currentTarget.style.background=B.white}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{display:"flex",alignItems:"center",gap:"8px",flex:1}}>
             <StatusBadge status={exp.Status}/>
@@ -898,7 +906,7 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,o
             {exp.Vendor&&<span style={{fontSize:"10px",color:B.teal400}}>{"\u2022"} {exp.Vendor}</span>}
           </div>
           <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
-            <span style={{fontSize:"13px",fontWeight:800,color:B.gold}}>{fmtMoney(exp.Amount)}</span>
+            <span style={{fontSize:"13px",fontWeight:800,color:B.goldDim}}>{fmtMoney(exp.Amount)}</span>
             <span style={{fontSize:"10px",color:B.teal400}}>{fmtDate(exp.ExpenseDate)}</span>
             {/* Any admin can approve/reject */}
             {userRole==="admin"&&exp.Status==="Submitted"&&onAction&&<>
@@ -971,17 +979,17 @@ function Dashboard({expenses}){
   const barChart=(entries,colors,label)=>{
     const max=entries.length>0?Math.max(...entries.map(e=>e[1])):1;
     return<div style={{marginBottom:"16px"}}>
-      <h4 style={{fontSize:"11px",fontWeight:800,color:B.teal200,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"8px"}}>{label}</h4>
+      <h4 style={{fontSize:"11px",fontWeight:800,color:B.teal700,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"8px"}}>{label}</h4>
       {entries.map(([name,amt],i)=>{
         const pct=max>0?Math.round(amt/max*100):0;
         const totalPct=total>0?Math.round(amt/total*100):0;
         const c=typeof colors==="object"&&!Array.isArray(colors)?colors[name]:colors[i%colors.length];
         return<div key={name} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}}>
-          <span style={{fontSize:"11px",color:B.teal200,width:"160px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</span>
-          <div style={{flex:1,height:"8px",background:B.teal800,borderRadius:"4px",overflow:"hidden"}}>
+          <span style={{fontSize:"11px",color:B.text,width:"160px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</span>
+          <div style={{flex:1,height:"8px",background:B.gray100,borderRadius:"4px",overflow:"hidden"}}>
             <div style={{width:pct+"%",height:"100%",background:c,borderRadius:"4px",transition:"width 0.3s"}}/>
           </div>
-          <span style={{fontSize:"10px",color:B.teal300,width:"70px",textAlign:"right"}}>{fmtMoney(amt)}</span>
+          <span style={{fontSize:"10px",color:B.teal400,width:"70px",textAlign:"right"}}>{fmtMoney(amt)}</span>
           <span style={{fontSize:"9px",color:B.teal400,width:"30px",textAlign:"right"}}>{totalPct}%</span>
         </div>
       })}
@@ -989,35 +997,35 @@ function Dashboard({expenses}){
   };
 
   return <Card>
-    <h3 style={{fontSize:"14px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"1px",marginBottom:"12px"}}>Dashboard</h3>
+    <h3 style={{fontSize:"14px",fontWeight:800,color:B.teal700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:"12px"}}>Dashboard</h3>
 
     {/* KPIs — clickable */}
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:"8px",marginBottom:"16px"}}>
       {kpiDefs.map(k=>(
         <div key={k.id} onClick={()=>setActiveKpi(activeKpi===k.id?null:k.id)}
-          style={{background:activeKpi===k.id?"rgba(205,160,75,0.1)":B.teal900,border:`1px solid ${activeKpi===k.id?B.gold:B.teal600}`,borderRadius:"6px",padding:"10px",textAlign:"center",cursor:"pointer",transition:"all 0.15s"}}>
+          style={{background:activeKpi===k.id?B.gold50:B.white,border:`1px solid ${activeKpi===k.id?B.gold:B.border}`,borderRadius:"6px",padding:"10px",textAlign:"center",cursor:"pointer",transition:"all 0.15s",boxShadow:"0 1px 3px rgba(28,55,64,0.06)"}}>
           <div style={{fontSize:"18px",fontWeight:900,color:k.color||B.gold}}>{k.value}</div>
-          <div style={{fontSize:"9px",fontWeight:700,color:B.teal300,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:"2px"}}>{k.label}</div>
+          <div style={{fontSize:"9px",fontWeight:700,color:B.teal400,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:"2px"}}>{k.label}</div>
           {k.sub&&<div style={{fontSize:"9px",color:B.teal400,marginTop:"2px"}}>{k.sub}</div>}
         </div>
       ))}
     </div>
 
     {/* Filtered list when KPI clicked */}
-    {activeKpi&&filteredExpenses.length>0&&<div style={{background:B.teal900,border:`1px solid ${B.gold}`,borderRadius:"6px",padding:"10px",marginBottom:"16px"}}>
+    {activeKpi&&filteredExpenses.length>0&&<div style={{background:B.gold50,border:`1px solid ${B.gold}`,borderRadius:"6px",padding:"10px",marginBottom:"16px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
-        <span style={{fontSize:"10px",fontWeight:700,color:B.gold,textTransform:"uppercase"}}>{activeFilter.label} ({filteredExpenses.length})</span>
+        <span style={{fontSize:"10px",fontWeight:700,color:B.goldDim,textTransform:"uppercase"}}>{activeFilter.label} ({filteredExpenses.length})</span>
         <button onClick={()=>setActiveKpi(null)} style={{background:"none",border:"none",color:B.teal400,cursor:"pointer",fontSize:"12px"}}>{"\u00d7"} Close</button>
       </div>
       {filteredExpenses.map(exp=>(
-        <div key={exp.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${B.teal600}`}}>
+        <div key={exp.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${B.border}`}}>
           <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
             <StatusBadge status={exp.Status}/>
             <span style={{fontSize:"11px",color:B.text}}>{exp.SubmittedByName||exp.SubmittedBy}</span>
             <span style={{fontSize:"10px",color:B.teal400}}>{exp.ExpenseType}</span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-            <span style={{fontSize:"12px",fontWeight:700,color:B.gold}}>{fmtMoney(exp.Amount)}</span>
+            <span style={{fontSize:"12px",fontWeight:700,color:B.goldDim}}>{fmtMoney(exp.Amount)}</span>
             <span style={{fontSize:"10px",color:B.teal400}}>{fmtDate(exp.ExpenseDate)}</span>
           </div>
         </div>
@@ -1076,7 +1084,7 @@ function AdminPanel({settings,users,routing,onSave,saving}){
   const expTypes=s.expenseTypes||DEFAULT_EXPENSE_TYPES;
 
   return <Card>
-    <h3 style={{fontSize:"14px",fontWeight:800,color:B.gold,textTransform:"uppercase",letterSpacing:"1px",marginBottom:"12px"}}>Admin Settings</h3>
+    <h3 style={{fontSize:"14px",fontWeight:800,color:B.teal700,textTransform:"uppercase",letterSpacing:"1px",marginBottom:"12px"}}>Admin Settings</h3>
 
     {/* Mileage Rate */}
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"16px"}}>
@@ -1092,11 +1100,11 @@ function AdminPanel({settings,users,routing,onSave,saving}){
     </div>
 
     {/* Test Mode */}
-    <div style={{marginBottom:"16px",padding:"10px",background:s.testMode?"rgba(211,91,75,0.1)":B.teal900,border:`1px solid ${s.testMode?B.no:B.teal600}`,borderRadius:"6px"}}>
+    <div style={{marginBottom:"16px",padding:"10px",background:s.testMode?"rgba(196,75,59,0.06)":B.pageBg,border:`1px solid ${s.testMode?B.no:B.border}`,borderRadius:"6px"}}>
       <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
         <button onClick={()=>setS({...s,testMode:!s.testMode})} style={{
           width:"36px",height:"20px",borderRadius:"10px",border:"none",cursor:"pointer",position:"relative",
-          background:s.testMode?B.no:B.teal600,transition:"background 0.2s"
+          background:s.testMode?B.no:B.teal300,transition:"background 0.2s"
         }}>
           <div style={{width:"16px",height:"16px",borderRadius:"8px",background:B.white,position:"absolute",top:"2px",
             left:s.testMode?"18px":"2px",transition:"left 0.2s"}}/>
@@ -1116,7 +1124,7 @@ function AdminPanel({settings,users,routing,onSave,saving}){
     <div style={{marginBottom:"16px"}}>
       <label style={lCss}>Expense Categories</label>
       <div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"6px"}}>
-        {s.categories.map(c=><span key={c} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.teal200,display:"flex",alignItems:"center",gap:"4px"}}>
+        {s.categories.map(c=><span key={c} style={{background:B.teal50,border:`1px solid ${B.teal100}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.teal700,display:"flex",alignItems:"center",gap:"4px"}}>
           {c}<button onClick={()=>removeCat(c)} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"11px"}}>×</button>
         </span>)}
       </div>
@@ -1130,7 +1138,7 @@ function AdminPanel({settings,users,routing,onSave,saving}){
     <div style={{marginBottom:"16px"}}>
       <label style={lCss}>Properties (for Bill-Backs)</label>
       <div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"6px"}}>
-        {s.properties.map(p=><span key={p} style={{background:B.teal900,border:`1px solid ${p==="Single Family"?B.gold:B.teal600}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:p==="Single Family"?B.gold:B.teal200,display:"flex",alignItems:"center",gap:"4px"}}>
+        {s.properties.map(p=><span key={p} style={{background:p==="Single Family"?B.gold50:B.teal50,border:`1px solid ${p==="Single Family"?B.gold:B.teal100}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:p==="Single Family"?B.goldDim:B.teal700,display:"flex",alignItems:"center",gap:"4px"}}>
           {p}{p!=="Single Family"&&<button onClick={()=>removeProp(p)} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"11px"}}>×</button>}
         </span>)}
       </div>
@@ -1144,12 +1152,12 @@ function AdminPanel({settings,users,routing,onSave,saving}){
     <div style={{marginBottom:"16px"}}>
       <label style={lCss}>Users & Roles</label>
       {u.map(user=>(
-        <div key={user.email} style={{background:B.teal900,border:`1px solid ${user.superAdmin?B.gold:B.teal600}`,borderRadius:"4px",padding:"6px 8px",marginBottom:"4px",display:"grid",gridTemplateColumns:"1fr 1fr auto auto 1fr auto",gap:"6px",alignItems:"center"}}>
+        <div key={user.email} style={{background:user.superAdmin?B.gold50:B.pageBg,border:`1px solid ${user.superAdmin?B.gold:B.border}`,borderRadius:"4px",padding:"6px 8px",marginBottom:"4px",display:"grid",gridTemplateColumns:"1fr 1fr auto auto 1fr auto",gap:"6px",alignItems:"center"}}>
           <span style={{fontSize:"11px",color:B.text,fontWeight:600}}>{user.name||user.email}</span>
           <span style={{fontSize:"10px",color:B.teal400}}>{user.email}</span>
           <Sel value={user.role} onChange={e=>updateUserRole(user.email,e.target.value)} options={["admin","accounting","employee"]} style={{fontSize:"10px",padding:"3px 6px",width:"100px"}}/>
           <button onClick={()=>setU(u.map(x=>x.email===user.email?{...x,superAdmin:!x.superAdmin}:x))} title="Super Admin: Can delete any expense" style={{
-            background:user.superAdmin?"rgba(205,160,75,0.15)":"transparent",border:`1px solid ${user.superAdmin?B.gold:B.teal600}`,
+            background:user.superAdmin?"rgba(205,160,75,0.1)":"transparent",border:`1px solid ${user.superAdmin?B.gold:B.border}`,
             borderRadius:"4px",padding:"2px 6px",fontSize:"9px",fontWeight:700,color:user.superAdmin?B.gold:B.teal400,
             cursor:"pointer",fontFamily:fb,whiteSpace:"nowrap"
           }}>{user.superAdmin?"\u2605 Super":"\u2606 Super"}</button>
@@ -1172,7 +1180,7 @@ function AdminPanel({settings,users,routing,onSave,saving}){
       {expTypes.map(et=>{
         const route=r[et]||{approvers:[],accounting:[]};
         const externalAcct=(route.accounting||[]).filter(e=>![...adminEmails,...accountingEmails].includes(e));
-        return <div key={et} style={{background:B.teal900,border:`1px solid ${B.teal600}`,borderRadius:"6px",padding:"10px",marginBottom:"8px"}}>
+        return <div key={et} style={{background:B.pageBg,border:`1px solid ${B.border}`,borderRadius:"6px",padding:"10px",marginBottom:"8px"}}>
           <div style={{fontSize:"12px",fontWeight:800,color:B.text,marginBottom:"8px"}}>{et}</div>
 
           {/* Approvers (notify on submit) */}
@@ -1390,21 +1398,21 @@ function ExpenseManager(){
 
   // Login screen
   if(!authed){
-    return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:B.bg}}>
+    return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:B.teal900}}>
       <div style={{textAlign:"center"}}>
         <div style={{fontSize:"10px",fontWeight:800,textTransform:"uppercase",letterSpacing:"3px",color:B.gold,marginBottom:"2px"}}>NewShire Property Management</div>
-        <h1 style={{fontSize:"22px",fontWeight:900,color:B.text,marginBottom:"16px"}}>Expense Manager</h1>
-        {authError?<div style={{color:B.no,fontSize:"12px",marginBottom:"12px"}}>{authError}</div>:
-          <div style={{color:B.teal300,fontSize:"12px",marginBottom:"12px"}}>Connecting...</div>}
-        <Btn onClick={async()=>{try{await getToken();setAuthed(true);setUserEmail(getUserEmail());setUserName(getUserName());setAuthError(null)}catch(e){setAuthError(e.message)}}}>
+        <h1 style={{fontSize:"22px",fontWeight:900,color:B.white,marginBottom:"16px"}}>Expense Manager</h1>
+        {authError?<div style={{color:"#F87171",fontSize:"12px",marginBottom:"12px"}}>{authError}</div>:
+          <div style={{color:"rgba(255,255,255,0.6)",fontSize:"12px",marginBottom:"12px"}}>Connecting...</div>}
+        <Btn onClick={async()=>{try{await getToken();setAuthed(true);setUserEmail(getUserEmail());setUserName(getUserName());setAuthError(null)}catch(e){setAuthError(e.message)}}} style={{background:B.gold,color:B.teal900}}>
           Sign In with Microsoft
         </Btn>
       </div>
-      <div style={{position:"fixed",bottom:"12px",fontSize:"9px",color:B.teal500}}>v{CONFIG.version}</div>
+      <div style={{position:"fixed",bottom:"12px",fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>v{CONFIG.version}</div>
     </div>;
   }
 
-  return <div style={{minHeight:"100vh",background:B.bg}}>
+  return <div style={{minHeight:"100vh",background:B.pageBg}}>
     {toast&&<Toast message={toast.message} type={toast.type} onClose={()=>setToast(null)}/>}
 
     {/* Expense Detail Modal */}
@@ -1416,23 +1424,24 @@ function ExpenseManager(){
     {settings.testMode&&<div style={{background:B.no,color:B.white,textAlign:"center",padding:"4px",fontSize:"10px",fontWeight:800,letterSpacing:"1px",textTransform:"uppercase"}}>{"\u26A0"} TEST MODE — All emails redirect to your inbox only {"\u26A0"}</div>}
 
     {/* Header */}
-    <div style={{background:B.teal900,borderBottom:`2px solid ${B.gold}`,padding:"10px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}} className="no-print">
+    <div style={{background:B.teal900,borderBottom:`2px solid ${B.gold}`,padding:"10px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:"8px"}} className="no-print">
       <div>
         <div style={{fontSize:"9px",fontWeight:800,textTransform:"uppercase",letterSpacing:"2px",color:B.gold}}>NewShire Property Management</div>
         <div style={{display:"flex",alignItems:"baseline",gap:"6px"}}>
-          <span style={{fontSize:"16px",fontWeight:900,color:B.text}}>Expense Manager</span>
-          <span style={{fontSize:"9px",fontWeight:600,color:B.teal500}}>v{CONFIG.version}</span>
+          <span style={{fontSize:"16px",fontWeight:900,color:B.white}}>Expense Manager</span>
+          <span style={{fontSize:"9px",fontWeight:600,color:"rgba(255,255,255,0.35)"}}>v{CONFIG.version}</span>
         </div>
       </div>
-      <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap"}}>
         {tabs.map(t=>(
           <button key={t.id} onClick={()=>{setTab(t.id);setEditExpense(null)}} style={{
-            background:tab===t.id?B.gold:"transparent",color:tab===t.id?"#1C3740":B.teal300,
+            background:tab===t.id?"rgba(255,255,255,0.12)":"transparent",color:tab===t.id?B.white:"rgba(255,255,255,0.55)",
             border:"none",borderRadius:"4px",padding:"6px 12px",fontSize:"10px",fontWeight:800,
-            textTransform:"uppercase",letterSpacing:"0.5px",cursor:"pointer",fontFamily:fb
+            textTransform:"uppercase",letterSpacing:"0.5px",cursor:"pointer",fontFamily:fb,
+            borderBottom:tab===t.id?`2px solid ${B.gold}`:"2px solid transparent",
           }}>{t.label}</button>
         ))}
-        <span style={{fontSize:"10px",color:B.teal400,marginLeft:"8px"}}>✓ {userName} ({ROLE_LABELS[userRole]})</span>
+        <span style={{fontSize:"10px",color:"rgba(255,255,255,0.5)",marginLeft:"8px"}}>✓ {userName} ({ROLE_LABELS[userRole]})</span>
       </div>
     </div>
 
@@ -1494,7 +1503,7 @@ function ExpenseManager(){
       </>}
     </div>
 
-    <div style={{position:"fixed",bottom:"8px",right:"12px",fontSize:"9px",color:B.teal500}} className="no-print">v{CONFIG.version}</div>
+    <div style={{position:"fixed",bottom:"8px",right:"12px",fontSize:"9px",color:B.teal300}} className="no-print">v{CONFIG.version}</div>
   </div>;
 }
 
