@@ -101,6 +101,7 @@ const B={
   pageBg:C.pageBg,gray100:C.gray100,gray200:C.gray200,
 };
 const fb="'Source Sans 3','Segoe UI',-apple-system,sans-serif";
+function sortCats(arr){const other=[];const rest=[];(arr||[]).forEach(c=>/^other$/i.test(c)?other.push(c):rest.push(c));return[...rest.sort((a,b)=>a.localeCompare(b)),...other]}
 const fm="'Source Code Pro',Consolas,monospace";
 
 // ============================================================
@@ -410,7 +411,7 @@ function Toast({message,type="info",onClose}){
 // ============================================================
 function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense}){
   const s=settings||DEFAULT_SETTINGS;
-  const cats=s.categories||DEFAULT_CATEGORIES;
+  const cats=sortCats(s.categories||DEFAULT_CATEGORIES);
   const props=s.properties||DEFAULT_PROPERTIES;
   const currentUser=users?.find(u=>u.email.toLowerCase()===(userEmail||"").toLowerCase());
   const homeOffice=currentUser?.homeOffice||"";
@@ -776,7 +777,7 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
   const lineItems=expense.LineItemsJSON?JSON.parse(expense.LineItemsJSON):[];
   const canAdminEdit=userRole==="admin"&&expense.Status==="Submitted";
   const s=settings||{};
-  const cats=s.categories||[];
+  const cats=sortCats(s.categories||[]);
   const props=s.properties||[];
   // Admin editable overrides for category and property
   const[editCategory,setEditCategory]=useState(expense.Category||"");
