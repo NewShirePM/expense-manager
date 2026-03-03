@@ -782,6 +782,7 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
   const[editCategory,setEditCategory]=useState(expense.Category||"");
   const[editProperty,setEditProperty]=useState(expense.Property||"");
   const[editSFAddress,setEditSFAddress]=useState(expense.SFAddress||"");
+  const[editDate,setEditDate]=useState(expense.ExpenseDate?expense.ExpenseDate.slice(0,10):"");
   const[editLineItems,setEditLineItems]=useState(lineItems.map(li=>({...li})));
   const updateLI=(idx,field,val)=>{const n=[...editLineItems];n[idx]={...n[idx],[field]:val};if(field==="property"&&val!=="Single Family"){n[idx].sfAddress=""}setEditLineItems(n)};
   const mileStops=expense.MileageStopsJSON?JSON.parse(expense.MileageStopsJSON):[];
@@ -833,15 +834,12 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
 
       {/* Body */}
       <div style={{padding:"16px"}}>
-        {row("Date",fmtDate(expense.ExpenseDate))}
+        {canAdminEdit?<div style={{display:"flex",borderBottom:`1px solid ${B.gray100}`,padding:"6px 0",alignItems:"center"}}>
+          <span style={{fontSize:"11px",color:B.teal400,width:"130px",flexShrink:0,fontWeight:600}}>Date</span>
+          <input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} style={{fontSize:"12px",color:B.text,border:`1px solid ${B.border}`,borderRadius:"4px",padding:"4px 8px",background:B.white,fontWeight:400}}/>
+        </div>:row("Date",fmtDate(expense.ExpenseDate))}
         {row("Submitted By",expense.SubmittedByName||expense.SubmittedBy)}
         {!isMileage&&row("Vendor",expense.Vendor)}
-        {canAdminEdit&&!isMileage&&!isCC?<div style={{display:"flex",borderBottom:`1px solid ${B.gray100}`,padding:"6px 0",alignItems:"center"}}>
-          <span style={{fontSize:"11px",color:B.teal400,width:"130px",flexShrink:0,fontWeight:600}}>Category</span>
-          <select value={editCategory} onChange={e=>setEditCategory(e.target.value)} style={{fontSize:"12px",color:B.text,border:`1px solid ${B.border}`,borderRadius:"4px",padding:"4px 8px",background:B.white,fontWeight:400,flex:1}}>
-            <option value="">Select...</option>{cats.map(c=><option key={c} value={c}>{c}</option>)}
-          </select>
-        </div>:row("Category",expense.Category)}
         {row("Description",expense.Description)}
         {expense.Tax>0&&row("Tax",fmtMoney(expense.Tax))}
         {expense.Tip>0&&row("Tip",fmtMoney(expense.Tip))}
@@ -897,16 +895,16 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
           <div style={{fontSize:"10px",fontWeight:800,color:B.goldDim,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"6px"}}>Attachments</div>
           {attLoading?<div style={{fontSize:"11px",color:B.teal400}}>Loading attachments...</div>:
            attachments.length===0?<div style={{fontSize:"11px",color:B.teal400}}>No attachments</div>:
-           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:"8px"}}>
+           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:"8px"}}>
              {attachments.map(f=>{
                const isImg=previews[f.id];
                const isPdf=(f.name||"").toLowerCase().endsWith(".pdf");
                return <div key={f.id} style={{background:B.pageBg,border:`1px solid ${B.border}`,borderRadius:"6px",overflow:"hidden"}}>
-                 {isImg?<img src={previews[f.id]} alt={f.name} onClick={()=>setExpandedImg(previews[f.id])} style={{width:"100%",height:"120px",objectFit:"cover",cursor:"pointer",display:"block"}}/>
-                  :isPdf?<div style={{height:"120px",display:"flex",alignItems:"center",justifyContent:"center",background:B.teal50}}>
+                 {isImg?<img src={previews[f.id]} alt={f.name} onClick={()=>setExpandedImg(previews[f.id])} style={{width:"100%",height:"180px",objectFit:"cover",cursor:"pointer",display:"block"}} title="Click to enlarge"/>
+                  :isPdf?<div style={{height:"180px",display:"flex",alignItems:"center",justifyContent:"center",background:B.teal50}}>
                     <a href={f.webUrl} target="_blank" rel="noopener" style={{color:B.goldDim,fontSize:"24px",textDecoration:"none"}} onClick={e=>e.stopPropagation()}>PDF</a>
                   </div>
-                  :<div style={{height:"120px",display:"flex",alignItems:"center",justifyContent:"center",background:B.teal50}}>
+                  :<div style={{height:"180px",display:"flex",alignItems:"center",justifyContent:"center",background:B.teal50}}>
                     <a href={f.webUrl} target="_blank" rel="noopener" style={{color:B.teal500,fontSize:"11px",textDecoration:"underline"}} onClick={e=>e.stopPropagation()}>Open File</a>
                   </div>}
                  <div style={{padding:"4px 6px",fontSize:"9px",color:B.teal400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
@@ -915,15 +913,21 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
            </div>}
         </div>}
 
-        {/* Expanded image lightbox */}
-        {expandedImg&&<div onClick={()=>setExpandedImg(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
-          <img src={expandedImg} style={{maxWidth:"90vw",maxHeight:"90vh",borderRadius:"8px",boxShadow:"0 4px 30px rgba(0,0,0,0.5)"}} alt="Attachment preview"/>
+        {/* Expanded image lightbox — full screen with zoom */}
+        {expandedImg&&<div onClick={()=>setExpandedImg(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:1100,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",padding:"20px"}}>
+          <div style={{position:"absolute",top:"16px",right:"20px",display:"flex",gap:"10px",zIndex:1101}}>
+            <a href={expandedImg} download style={{background:"rgba(255,255,255,0.15)",color:"#fff",padding:"6px 14px",borderRadius:"4px",fontSize:"11px",fontWeight:700,textDecoration:"none",cursor:"pointer"}} onClick={e=>e.stopPropagation()}>Download</a>
+            <button onClick={()=>setExpandedImg(null)} style={{background:"rgba(255,255,255,0.15)",color:"#fff",border:"none",padding:"6px 12px",borderRadius:"4px",fontSize:"14px",fontWeight:700,cursor:"pointer"}}>{"\u00d7"}</button>
+          </div>
+          <img src={expandedImg} style={{maxWidth:"95vw",maxHeight:"92vh",objectFit:"contain",borderRadius:"4px",boxShadow:"0 4px 40px rgba(0,0,0,0.6)"}} alt="Attachment preview"/>
+          <div style={{color:"rgba(255,255,255,0.4)",fontSize:"10px",marginTop:"8px"}}>Click anywhere to close</div>
         </div>}
 
         {/* Actions */}
         <div style={{marginTop:"16px",display:"flex",gap:"8px",justifyContent:"flex-end",flexWrap:"wrap",borderTop:`1px solid ${B.teal600}`,paddingTop:"12px"}}>
           {userRole==="admin"&&expense.Status==="Submitted"&&onAction&&<>
-            <Btn style={{background:B.ok}} onClick={()=>onAction(expense.id,"approve",null,{editCategory,editProperty,editSFAddress,editLineItems})} disabled={actionLoading}>{"\u2713"} Approve</Btn>
+            <Btn style={{background:"#4A78B0",color:"#fff"}} onClick={()=>onAction(expense.id,"save_edits",null,{editProperty,editLineItems,editDate})} disabled={actionLoading}>Save Edits</Btn>
+            <Btn style={{background:B.ok}} onClick={()=>onAction(expense.id,"approve",null,{editProperty,editLineItems,editDate})} disabled={actionLoading}>{"\u2713"} Approve</Btn>
             <Btn style={{background:B.no}} onClick={()=>{const n=prompt("Rejection reason (optional):");if(n!==null)onAction(expense.id,"reject",n)}} disabled={actionLoading}>{"\u2717"} Reject</Btn>
           </>}
           {(userRole==="admin"||userRole==="accounting")&&expense.Status==="Approved"&&onAction&&
@@ -1395,13 +1399,24 @@ function ExpenseManager(){
       const expense=expenses.find(e=>e.id===itemId);
       const isCC=expense?.ExpenseType==="Credit Card Reconciliation";
 
-      if(action==="approve"){
+      if(action==="save_edits"){
+        // Save admin edits without changing status
+        if(adminEdits){
+          if(adminEdits.editProperty&&adminEdits.editProperty!==expense.Property)fields.Property=adminEdits.editProperty;
+          if(adminEdits.editDate&&adminEdits.editDate!==expense.ExpenseDate?.slice(0,10))fields.ExpenseDate=adminEdits.editDate;
+          if(adminEdits.editLineItems&&adminEdits.editLineItems.length>0){
+            const origLI=expense.LineItemsJSON?JSON.parse(expense.LineItemsJSON):[];
+            const changed=JSON.stringify(adminEdits.editLineItems)!==JSON.stringify(origLI);
+            if(changed)fields.LineItemsJSON=JSON.stringify(adminEdits.editLineItems);
+          }
+        }
+        if(Object.keys(fields).length===0){setToast({message:"No changes to save",type:"info"});setActionLoading(false);return}
+      }else if(action==="approve"){
         fields.Status="Approved";fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
         // Apply admin edits to category/property if changed
         if(adminEdits){
-          if(adminEdits.editCategory&&adminEdits.editCategory!==expense.Category)fields.Category=adminEdits.editCategory;
           if(adminEdits.editProperty&&adminEdits.editProperty!==expense.Property)fields.Property=adminEdits.editProperty;
-          if(adminEdits.editSFAddress!==undefined&&adminEdits.editSFAddress!==expense.SFAddress)fields.SFAddress=adminEdits.editSFAddress;
+          if(adminEdits.editDate&&adminEdits.editDate!==expense.ExpenseDate?.slice(0,10))fields.ExpenseDate=adminEdits.editDate;
           if(adminEdits.editLineItems&&adminEdits.editLineItems.length>0){
             const origLI=expense.LineItemsJSON?JSON.parse(expense.LineItemsJSON):[];
             const changed=JSON.stringify(adminEdits.editLineItems)!==JSON.stringify(origLI);
@@ -1436,8 +1451,8 @@ function ExpenseManager(){
       }
 
       await refresh();
-      setToast({message:`Expense ${action==="process"?(isCC?"processed":"moved to pending payment"):action==="paid"?"marked as paid":action+"d"} successfully`,type:"success"});
-      setViewExpense(null);
+      setToast({message:action==="save_edits"?"Edits saved successfully":`Expense ${action==="process"?(isCC?"processed":"moved to pending payment"):action==="paid"?"marked as paid":action+"d"} successfully`,type:"success"});
+      if(action!=="save_edits")setViewExpense(null);
     }catch(e){
       setToast({message:`Action failed: ${e.message}`,type:"error"});
     }finally{setActionLoading(false)}
