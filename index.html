@@ -1748,7 +1748,9 @@ function ExpenseManager(){
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
           <ExpenseList expenses={expenses} title="Pending Payment" filter={e=>e.Status==="Pending Payment"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
-          <ExpenseList expenses={expenses} title="Recently Completed" filter={e=>["Processed","Paid","Rejected"].includes(e.Status)}
+          <ExpenseList expenses={expenses} title="Rejected — Awaiting Resubmission" filter={e=>e.Status==="Rejected"}
+            userRole={userRole} userEmail={userEmail} onView={setViewExpense} onDelete={handleDelete} isSuperAdmin={isSuperAdmin}/>
+          <ExpenseList expenses={expenses} title="Recently Completed" filter={e=>["Processed","Paid"].includes(e.Status)}
             userRole={userRole} userEmail={userEmail} onView={setViewExpense} onDelete={handleDelete} isSuperAdmin={isSuperAdmin}/>
         </>}
 
