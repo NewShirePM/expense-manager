@@ -21,6 +21,7 @@ input,select,textarea,button{font-family:inherit}
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script crossorigin src="https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js"></script>
+<script crossorigin src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -38,7 +39,7 @@ const CONFIG={
   configListName:"Expense Config",
   employeesListName:"Employees",
   googleMapsKey:"AIzaSyCgm0GDTAcsYUJtTVrZLR3xS8sazfqXxSY",
-  version:"3.1.0",
+  version:"3.2.0",
 };
 const GRAPH="https://graph.microsoft.com/v1.0";
 
@@ -313,6 +314,7 @@ function buildExpenseEmailHtml(expense,action,opts={}){
     rejected:{t:"Expense Rejected",c:"#D35B4B",i:"Your expense has been reviewed and was not approved."},
     processed:{t:"Credit Card Expense Processed",c:"#6A8EC8",i:"Your credit card expense has been processed."},
     pending_payment:{t:"Expense Pending Payment",c:"#6A8EC8",i:`An expense has been processed and is pending payment on the next payroll cycle.`},
+    paid:{t:"Expense Paid",c:"#3DA06B",i:`Your expense has been paid.`},
   }[action];
   let rows=`<tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px;width:140px">Type</td><td style="padding:6px 12px;font-size:12px;font-weight:600;color:#E8ECEE">${expense.ExpenseType}</td></tr><tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Date</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${fmtDate(expense.ExpenseDate)}</td></tr><tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Submitted By</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${expense.SubmittedByName||expense.SubmittedBy}</td></tr><tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px;font-weight:700">Amount</td><td style="padding:6px 12px;font-size:16px;font-weight:800;color:#CDA04B">${fmtMoney(expense.Amount)}</td></tr>`;
   if(!isM&&expense.Vendor)rows+=`<tr><td style="padding:6px 12px;color:#8BA8B4;font-size:12px">Vendor</td><td style="padding:6px 12px;font-size:12px;color:#E8ECEE">${expense.Vendor}</td></tr>`;
@@ -334,12 +336,14 @@ async function sendNotificationEmail(expense,action,{routing,settings,users,appr
   const route=routing?.[expense.ExpenseType];if(!route)return;
   const testMode=settings?.testMode||false;
   const currentUser=getUserEmail();
+  const submitter=expense.SubmittedBy;
   try{
     if(action==="submitted"){let a=route.approvers||[];if(a.length===0)return;if(testMode)a=[currentUser];await sendEmail({to:a,subject:`${testMode?"[TEST] ":""}[Expense Review] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"submitted",{})})}
-    else if(action==="approved"){let ac=route.accounting||[];if(ac.length===0)return;if(testMode)ac=[currentUser];let att=[];try{const fs=await getAttachments(expenseId);for(const f of fs){try{const{base64,contentType}=await getAttachmentBase64(f.id);att.push({name:f.name,contentType,base64})}catch(e){}}}catch(e){}await sendEmail({to:ac,subject:`${testMode?"[TEST] ":""}[Approved \u2014 Process] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"approved",{approverName,powerAutomateUrl:settings?.powerAutomateUrl||"",expenseId}),attachments:att})}
-    else if(action==="rejected"){let to=expense.SubmittedBy;if(!to)return;if(testMode)to=currentUser;await sendEmail({to,subject:`${testMode?"[TEST] ":""}[Expense Rejected] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)}`,htmlBody:buildExpenseEmailHtml(expense,"rejected",{approverName,rejectionNotes})})}
-    else if(action==="processed"){let a=route.approvers||[];if(a.length===0)return;if(testMode)a=[currentUser];await sendEmail({to:a,subject:`${testMode?"[TEST] ":""}[Processed] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"processed",{})})}
-    else if(action==="pending_payment"){let a=route.approvers||[];if(a.length===0)return;if(testMode)a=[currentUser];await sendEmail({to:a,subject:`${testMode?"[TEST] ":""}[Pending Payment] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"pending_payment",{})})}
+    else if(action==="approved"){let ac=route.accounting||[];if(ac.length===0)ac=[];if(testMode)ac=[currentUser];let att=[];try{const fs=await getAttachments(expenseId);for(const f of fs){try{const{base64,contentType}=await getAttachmentBase64(f.id);att.push({name:f.name,contentType,base64})}catch(e){}}}catch(e){}const toList=[...new Set([...ac,submitter].filter(Boolean))];if(testMode){await sendEmail({to:[currentUser],subject:`${testMode?"[TEST] ":""}[Approved \u2014 Process] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"approved",{approverName,powerAutomateUrl:settings?.powerAutomateUrl||"",expenseId}),attachments:att})}else{await sendEmail({to:toList,subject:`[Approved \u2014 Process] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"approved",{approverName,powerAutomateUrl:settings?.powerAutomateUrl||"",expenseId}),attachments:att})}}
+    else if(action==="rejected"){let to=submitter;if(!to)return;if(testMode)to=currentUser;await sendEmail({to,subject:`${testMode?"[TEST] ":""}[Expense Rejected] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)}`,htmlBody:buildExpenseEmailHtml(expense,"rejected",{approverName,rejectionNotes})})}
+    else if(action==="processed"){const toList=testMode?[currentUser]:[...new Set([...(route.approvers||[]),submitter].filter(Boolean))];await sendEmail({to:toList,subject:`${testMode?"[TEST] ":""}[Processed] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"processed",{})})}
+    else if(action==="pending_payment"){const toList=testMode?[currentUser]:[...new Set([...(route.approvers||[]),submitter].filter(Boolean))];await sendEmail({to:toList,subject:`${testMode?"[TEST] ":""}[Pending Payment] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)} from ${expense.SubmittedByName||expense.SubmittedBy}`,htmlBody:buildExpenseEmailHtml(expense,"pending_payment",{})})}
+    else if(action==="paid"){const toList=testMode?[currentUser]:[submitter].filter(Boolean);if(toList.length)await sendEmail({to:toList,subject:`${testMode?"[TEST] ":""}[Paid] ${expense.ExpenseType} \u2014 ${fmtMoney(expense.Amount)}`,htmlBody:buildExpenseEmailHtml(expense,"paid",{})})}
   }catch(e){console.error("Email notification failed:",e)}
 }
 
@@ -1001,6 +1005,96 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,o
 }
 
 // ============================================================
+// EXCEL REPORT GENERATION
+// ============================================================
+function generateCCReport(expenses){
+  const approved=expenses.filter(e=>e.ExpenseType==="Credit Card Reconciliation"&&e.Status==="Approved");
+  if(!approved.length){alert("No approved unprocessed CC transactions found.");return}
+  const rows=[];
+  approved.forEach(exp=>{
+    const li=exp.LineItemsJSON?JSON.parse(exp.LineItemsJSON):[];
+    if(li.length>0){
+      li.forEach(l=>rows.push({
+        "Transaction Date":exp.ExpenseDate?new Date(exp.ExpenseDate+"T12:00:00").toLocaleDateString("en-US"):"",
+        "Card (Last 4)":exp.CardLast4||"",
+        "Submitted By":exp.SubmittedByName||exp.SubmittedBy||"",
+        "Property":l.property||"",
+        "GL Code":l.category||"",
+        "Description":l.description||"",
+        "Amount":+(l.amount||0),
+      }));
+    }else{
+      rows.push({
+        "Transaction Date":exp.ExpenseDate?new Date(exp.ExpenseDate+"T12:00:00").toLocaleDateString("en-US"):"",
+        "Card (Last 4)":exp.CardLast4||"",
+        "Submitted By":exp.SubmittedByName||exp.SubmittedBy||"",
+        "Property":exp.Property||"",
+        "GL Code":exp.Category||"",
+        "Description":exp.Description||"",
+        "Amount":+(exp.Amount||0),
+      });
+    }
+  });
+  // Add total row
+  const total=rows.reduce((t,r)=>t+r.Amount,0);
+  rows.push({"Transaction Date":"","Card (Last 4)":"","Submitted By":"","Property":"","GL Code":"","Description":"TOTAL","Amount":total});
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.json_to_sheet(rows);
+  // Set column widths
+  ws["!cols"]=[{wch:14},{wch:10},{wch:20},{wch:20},{wch:18},{wch:35},{wch:12}];
+  // Format amount column as currency
+  const range=XLSX.utils.decode_range(ws["!ref"]);
+  for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:6})];if(cell&&typeof cell.v==="number")cell.z="$#,##0.00"}
+  XLSX.utils.book_append_sheet(wb,ws,"CC Reconciliation");
+  const d=new Date();const fname=`CC_Reconciliation_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`;
+  XLSX.writeFile(wb,fname);
+}
+
+function generateReimbursementReport(expenses){
+  const pending=expenses.filter(e=>(e.ExpenseType==="Personal Reimbursement"||e.ExpenseType==="Mileage")&&e.Status==="Pending Payment");
+  if(!pending.length){alert("No pending payment reimbursements found.");return}
+  // Group by person
+  const byPerson={};
+  pending.forEach(exp=>{
+    const name=exp.SubmittedByName||exp.SubmittedBy||"Unknown";
+    if(!byPerson[name])byPerson[name]=[];
+    byPerson[name].push(exp);
+  });
+  const rows=[];
+  const people=Object.keys(byPerson).sort();
+  people.forEach(name=>{
+    const exps=byPerson[name].sort((a,b)=>new Date(a.ExpenseDate||0)-new Date(b.ExpenseDate||0));
+    exps.forEach(exp=>{
+      const isMileage=exp.ExpenseType==="Mileage";
+      rows.push({
+        "Employee":name,
+        "Date":exp.ExpenseDate?new Date(exp.ExpenseDate+"T12:00:00").toLocaleDateString("en-US"):"",
+        "Type":isMileage?"Mileage":"Reimbursement",
+        "Vendor":isMileage?"":exp.Vendor||"",
+        "Description":exp.Description||"",
+        "Amount":+(exp.Amount||0),
+      });
+    });
+    // Subtotal per person
+    const personTotal=exps.reduce((t,e)=>t+(e.Amount||0),0);
+    rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Description":`SUBTOTAL — ${name}`,"Amount":personTotal});
+    rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Description":"","Amount":""});
+  });
+  // Remove trailing blank row, add grand total
+  if(rows.length>0&&rows[rows.length-1].Description==="")rows.pop();
+  const grandTotal=pending.reduce((t,e)=>t+(e.Amount||0),0);
+  rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Description":"GRAND TOTAL","Amount":grandTotal});
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.json_to_sheet(rows);
+  ws["!cols"]=[{wch:22},{wch:12},{wch:15},{wch:22},{wch:35},{wch:12}];
+  const range=XLSX.utils.decode_range(ws["!ref"]);
+  for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:5})];if(cell&&typeof cell.v==="number")cell.z="$#,##0.00"}
+  XLSX.utils.book_append_sheet(wb,ws,"Reimbursements");
+  const d=new Date();const fname=`Reimbursements_PendingPayment_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`;
+  XLSX.writeFile(wb,fname);
+}
+
+// ============================================================
 // DASHBOARD COMPONENT
 // ============================================================
 function Dashboard({expenses}){
@@ -1440,15 +1534,13 @@ function ExpenseManager(){
       await updateExpense(itemId,fields);
 
       // Send email notifications (fire-and-forget)
-      if(expense){
+      if(expense&&action!=="save_edits"){
         const emailAction=action==="process"?(isCC?"processed":"pending_payment"):action;
-        if(emailAction!=="paid"){
-          sendNotificationEmail({...expense,...fields},emailAction,{
+        sendNotificationEmail({...expense,...fields},emailAction,{
             routing:routing||DEFAULT_ROUTING,settings,users,
             approverName:getUserName()||userEmail,
             rejectionNotes:notes,expenseId:itemId.toString()
           }).catch(e=>console.warn("Email notification error:",e));
-        }
       }
 
       await refresh();
@@ -1587,6 +1679,10 @@ function ExpenseManager(){
           }}/>}
 
         {tab==="queue"&&isAdmin&&<>
+          <div style={{display:"flex",gap:"8px",marginBottom:"12px",flexWrap:"wrap"}}>
+            <Btn v="secondary" onClick={()=>generateCCReport(expenses)} style={{fontSize:"10px",padding:"5px 12px"}}>Export CC Reconciliation (.xlsx)</Btn>
+            <Btn v="secondary" onClick={()=>generateReimbursementReport(expenses)} style={{fontSize:"10px",padding:"5px 12px"}}>Export Reimbursements for Payroll (.xlsx)</Btn>
+          </div>
           <ExpenseList expenses={expenses} title="Pending Approval" filter={e=>e.Status==="Submitted"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
           <ExpenseList expenses={expenses} title="Approved — Awaiting Processing" filter={e=>e.Status==="Approved"}
