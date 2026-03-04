@@ -1007,53 +1007,54 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,o
 // ============================================================
 // EXCEL REPORT GENERATION
 // ============================================================
+
+// CC Reconciliation Report: All CC expenses from Approved through Processed (the full in-flight + done range)
 function generateCCReport(expenses){
-  const approved=expenses.filter(e=>e.ExpenseType==="Credit Card Reconciliation"&&e.Status==="Approved");
-  if(!approved.length){alert("No approved unprocessed CC transactions found.");return}
+  const inFlow=expenses.filter(e=>e.ExpenseType==="Credit Card Reconciliation"&&["Approved","Processed"].includes(e.Status));
+  if(!inFlow.length){alert("No approved or processed CC transactions found.");return}
   const rows=[];
-  approved.forEach(exp=>{
+  inFlow.forEach(exp=>{
     const li=exp.LineItemsJSON?JSON.parse(exp.LineItemsJSON):[];
+    const chargeDate=exp.ChargeDate?new Date(exp.ChargeDate).toLocaleDateString("en-US"):"";
     if(li.length>0){
       li.forEach(l=>rows.push({
-        "Transaction Date":exp.ExpenseDate?new Date(exp.ExpenseDate+"T12:00:00").toLocaleDateString("en-US"):"",
+        "Charge Date":chargeDate,
         "Card (Last 4)":exp.CardLast4||"",
         "Submitted By":exp.SubmittedByName||exp.SubmittedBy||"",
         "Property":l.property||"",
         "GL Code":l.category||"",
         "Description":l.description||"",
         "Amount":+(l.amount||0),
+        "Status":exp.Status||"",
       }));
     }else{
       rows.push({
-        "Transaction Date":exp.ExpenseDate?new Date(exp.ExpenseDate+"T12:00:00").toLocaleDateString("en-US"):"",
+        "Charge Date":chargeDate,
         "Card (Last 4)":exp.CardLast4||"",
         "Submitted By":exp.SubmittedByName||exp.SubmittedBy||"",
         "Property":exp.Property||"",
         "GL Code":exp.Category||"",
         "Description":exp.Description||"",
         "Amount":+(exp.Amount||0),
+        "Status":exp.Status||"",
       });
     }
   });
-  // Add total row
   const total=rows.reduce((t,r)=>t+r.Amount,0);
-  rows.push({"Transaction Date":"","Card (Last 4)":"","Submitted By":"","Property":"","GL Code":"","Description":"TOTAL","Amount":total});
+  rows.push({"Charge Date":"","Card (Last 4)":"","Submitted By":"","Property":"","GL Code":"","Description":"TOTAL","Amount":total,"Status":""});
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.json_to_sheet(rows);
-  // Set column widths
-  ws["!cols"]=[{wch:14},{wch:10},{wch:20},{wch:20},{wch:18},{wch:35},{wch:12}];
-  // Format amount column as currency
+  ws["!cols"]=[{wch:14},{wch:10},{wch:20},{wch:20},{wch:18},{wch:35},{wch:12},{wch:14}];
   const range=XLSX.utils.decode_range(ws["!ref"]);
   for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:6})];if(cell&&typeof cell.v==="number")cell.z="$#,##0.00"}
   XLSX.utils.book_append_sheet(wb,ws,"CC Reconciliation");
-  const d=new Date();const fname=`CC_Reconciliation_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`;
-  XLSX.writeFile(wb,fname);
+  const d=new Date();XLSX.writeFile(wb,`CC_Reconciliation_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`);
 }
 
-function generateReimbursementReport(expenses){
+// Reimbursement Payroll Report: Pending Payment only (Mileage + Reimbursement), grouped by person with subtotals
+function generateReimbursementPayrollReport(expenses){
   const pending=expenses.filter(e=>(e.ExpenseType==="Personal Reimbursement"||e.ExpenseType==="Mileage")&&e.Status==="Pending Payment");
   if(!pending.length){alert("No pending payment reimbursements found.");return}
-  // Group by person
   const byPerson={};
   pending.forEach(exp=>{
     const name=exp.SubmittedByName||exp.SubmittedBy||"Unknown";
@@ -1061,26 +1062,23 @@ function generateReimbursementReport(expenses){
     byPerson[name].push(exp);
   });
   const rows=[];
-  const people=Object.keys(byPerson).sort();
-  people.forEach(name=>{
+  Object.keys(byPerson).sort().forEach(name=>{
     const exps=byPerson[name].sort((a,b)=>new Date(a.ExpenseDate||0)-new Date(b.ExpenseDate||0));
     exps.forEach(exp=>{
       const isMileage=exp.ExpenseType==="Mileage";
       rows.push({
         "Employee":name,
-        "Date":exp.ExpenseDate?new Date(exp.ExpenseDate+"T12:00:00").toLocaleDateString("en-US"):"",
+        "Date":exp.ExpenseDate?new Date(exp.ExpenseDate).toLocaleDateString("en-US"):"",
         "Type":isMileage?"Mileage":"Reimbursement",
         "Vendor":isMileage?"":exp.Vendor||"",
         "Description":exp.Description||"",
         "Amount":+(exp.Amount||0),
       });
     });
-    // Subtotal per person
     const personTotal=exps.reduce((t,e)=>t+(e.Amount||0),0);
     rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Description":`SUBTOTAL — ${name}`,"Amount":personTotal});
     rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Description":"","Amount":""});
   });
-  // Remove trailing blank row, add grand total
   if(rows.length>0&&rows[rows.length-1].Description==="")rows.pop();
   const grandTotal=pending.reduce((t,e)=>t+(e.Amount||0),0);
   rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Description":"GRAND TOTAL","Amount":grandTotal});
@@ -1089,9 +1087,53 @@ function generateReimbursementReport(expenses){
   ws["!cols"]=[{wch:22},{wch:12},{wch:15},{wch:22},{wch:35},{wch:12}];
   const range=XLSX.utils.decode_range(ws["!ref"]);
   for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:5})];if(cell&&typeof cell.v==="number")cell.z="$#,##0.00"}
-  XLSX.utils.book_append_sheet(wb,ws,"Reimbursements");
-  const d=new Date();const fname=`Reimbursements_PendingPayment_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`;
-  XLSX.writeFile(wb,fname);
+  XLSX.utils.book_append_sheet(wb,ws,"Payroll Reimbursements");
+  const d=new Date();XLSX.writeFile(wb,`Reimbursements_Payroll_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`);
+}
+
+// Reimbursement Reconciliation Report: All in-flight Mileage + Reimbursement (Approved → Pending Payment → Paid) with status
+function generateReimbursementReconReport(expenses){
+  const inFlow=expenses.filter(e=>(e.ExpenseType==="Personal Reimbursement"||e.ExpenseType==="Mileage")&&["Approved","Pending Payment","Paid"].includes(e.Status));
+  if(!inFlow.length){alert("No reimbursements in the approval-to-paid pipeline found.");return}
+  const rows=[];
+  const byPerson={};
+  inFlow.forEach(exp=>{
+    const name=exp.SubmittedByName||exp.SubmittedBy||"Unknown";
+    if(!byPerson[name])byPerson[name]=[];
+    byPerson[name].push(exp);
+  });
+  Object.keys(byPerson).sort().forEach(name=>{
+    const exps=byPerson[name].sort((a,b)=>new Date(a.ExpenseDate||0)-new Date(b.ExpenseDate||0));
+    exps.forEach(exp=>{
+      const isMileage=exp.ExpenseType==="Mileage";
+      const li=exp.LineItemsJSON?JSON.parse(exp.LineItemsJSON):[];
+      const property=li.length>0?li.map(l=>l.property).filter(Boolean).join(", "):(exp.Property||"");
+      rows.push({
+        "Employee":name,
+        "Date":exp.ExpenseDate?new Date(exp.ExpenseDate).toLocaleDateString("en-US"):"",
+        "Type":isMileage?"Mileage":"Reimbursement",
+        "Vendor":isMileage?"":exp.Vendor||"",
+        "Property":property,
+        "Category":isMileage?"Mileage":(li.length>0?li.map(l=>l.category).filter(Boolean).join(", "):(exp.Category||"")),
+        "Description":exp.Description||"",
+        "Amount":+(exp.Amount||0),
+        "Status":exp.Status||"",
+        "Approved By":exp.ApprovedBy||"",
+        "Approved Date":exp.ApprovedDate?new Date(exp.ApprovedDate).toLocaleDateString("en-US"):"",
+      });
+    });
+    const personTotal=exps.reduce((t,e)=>t+(e.Amount||0),0);
+    rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Property":"","Category":"","Description":`SUBTOTAL — ${name}`,"Amount":personTotal,"Status":"","Approved By":"","Approved Date":""});
+  });
+  const grandTotal=inFlow.reduce((t,e)=>t+(e.Amount||0),0);
+  rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Property":"","Category":"","Description":"GRAND TOTAL","Amount":grandTotal,"Status":"","Approved By":"","Approved Date":""});
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.json_to_sheet(rows);
+  ws["!cols"]=[{wch:22},{wch:12},{wch:15},{wch:20},{wch:20},{wch:18},{wch:30},{wch:12},{wch:14},{wch:20},{wch:14}];
+  const range=XLSX.utils.decode_range(ws["!ref"]);
+  for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:7})];if(cell&&typeof cell.v==="number")cell.z="$#,##0.00"}
+  XLSX.utils.book_append_sheet(wb,ws,"Reimbursement Recon");
+  const d=new Date();XLSX.writeFile(wb,`Reimbursement_Reconciliation_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`);
 }
 
 // ============================================================
@@ -1680,8 +1722,9 @@ function ExpenseManager(){
 
         {tab==="queue"&&isAdmin&&<>
           <div style={{display:"flex",gap:"8px",marginBottom:"12px",flexWrap:"wrap"}}>
-            <Btn v="secondary" onClick={()=>generateCCReport(expenses)} style={{fontSize:"10px",padding:"5px 12px"}}>Export CC Reconciliation (.xlsx)</Btn>
-            <Btn v="secondary" onClick={()=>generateReimbursementReport(expenses)} style={{fontSize:"10px",padding:"5px 12px"}}>Export Reimbursements for Payroll (.xlsx)</Btn>
+            <Btn v="secondary" onClick={()=>generateCCReport(expenses)} style={{fontSize:"10px",padding:"5px 12px"}}>CC Reconciliation (.xlsx)</Btn>
+            <Btn v="secondary" onClick={()=>generateReimbursementPayrollReport(expenses)} style={{fontSize:"10px",padding:"5px 12px"}}>Reimbursements — Payroll (.xlsx)</Btn>
+            <Btn v="secondary" onClick={()=>generateReimbursementReconReport(expenses)} style={{fontSize:"10px",padding:"5px 12px"}}>Reimbursements — Reconciliation (.xlsx)</Btn>
           </div>
           <ExpenseList expenses={expenses} title="Pending Approval" filter={e=>e.Status==="Submitted"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
