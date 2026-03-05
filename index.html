@@ -962,7 +962,7 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
             <Btn style={{background:B.no}} onClick={()=>{const n=prompt("Rejection reason (optional):");if(n!==null)onAction(expense.id,"reject",n)}} disabled={actionLoading}>{"\u2717"} Reject</Btn>
           </>}
           {(userRole==="admin"||userRole==="accounting")&&expense.Status==="Approved"&&onAction&&
-            <Btn style={{background:"#6A8EC8"}} onClick={()=>onAction(expense.id,"process")} disabled={actionLoading}>{isCC?"$ Mark Processed":"$ Pending Payment"}</Btn>
+            <Btn style={{background:"#6A8EC8"}} onClick={()=>onAction(expense.id,"process")} disabled={actionLoading}>{"Posted in AppFolio"}</Btn>
           }
           {userRole==="admin"&&expense.Status==="Pending Payment"&&onAction&&
             <Btn style={{background:B.ok}} onClick={()=>onAction(expense.id,"paid")} disabled={actionLoading}>{"\u2713"} Mark Paid</Btn>
@@ -980,12 +980,15 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
 // ============================================================
 // EXPENSE LIST COMPONENT
 // ============================================================
-function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,onDelete,actionLoading,isSuperAdmin}){
+function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,onDelete,actionLoading,isSuperAdmin,headerActions}){
   const filtered=filter?expenses.filter(filter):expenses;
-  if(filtered.length===0)return <Card style={{marginBottom:"8px"}}><div style={{fontSize:"11px",color:B.teal400,textAlign:"center",padding:"8px"}}>{title}: None</div></Card>;
+  if(filtered.length===0)return <Card style={{marginBottom:"8px"}}><div style={{fontSize:"11px",color:B.teal400,textAlign:"center",padding:"8px"}}>{title}: None{headerActions&&<div style={{marginTop:"6px"}}>{headerActions}</div>}</div></Card>;
   const isCC=(exp)=>exp.ExpenseType==="Credit Card Reconciliation";
   return <Card style={{marginBottom:"8px"}}>
-    <h4 style={{fontSize:"11px",fontWeight:800,color:B.teal700,textTransform:"uppercase",letterSpacing:"0.8px",marginBottom:"8px",borderBottom:`2px solid ${B.gold}`,paddingBottom:"6px",display:"inline-block"}}>{title} ({filtered.length})</h4>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px",borderBottom:`2px solid ${B.gold}`,paddingBottom:"6px",flexWrap:"wrap",gap:"6px"}}>
+      <h4 style={{fontSize:"11px",fontWeight:800,color:B.teal700,textTransform:"uppercase",letterSpacing:"0.8px",margin:0}}>{title} ({filtered.length})</h4>
+      {headerActions&&<div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>{headerActions}</div>}
+    </div>
     {filtered.map(exp=>{
       const isOwner=exp.SubmittedBy?.toLowerCase()===userEmail?.toLowerCase();
       const canDelete=isSuperAdmin||(isOwner&&exp.Status==="Submitted");
@@ -1010,10 +1013,10 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,o
             </>}
             {/* Process: CC→Processed, Reimb/Mileage→Pending Payment */}
             {userRole==="admin"&&exp.Status==="Approved"&&onAction&&
-              <Btn v="small" style={{background:"#6A8EC8",color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"process")}} disabled={actionLoading}>{isCC(exp)?"$ Processed":"$ Pend Pmt"}</Btn>
+              <Btn v="small" style={{background:"#6A8EC8",color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"process")}} disabled={actionLoading}>{"Posted in AppFolio"}</Btn>
             }
             {userRole==="accounting"&&exp.Status==="Approved"&&onAction&&
-              <Btn v="small" style={{background:B.ok,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"process")}} disabled={actionLoading}>{isCC(exp)?"$ Processed":"$ Pend Pmt"}</Btn>
+              <Btn v="small" style={{background:B.ok,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"process")}} disabled={actionLoading}>{"Posted in AppFolio"}</Btn>
             }
             {/* Mark Pending Payment as Paid */}
             {userRole==="admin"&&exp.Status==="Pending Payment"&&onAction&&
@@ -1034,16 +1037,20 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,o
 // EXCEL REPORT GENERATION
 // ============================================================
 
-// CC Reconciliation Report: All CC expenses from Approved through Processed (the full in-flight + done range)
-function generateCCReport(expenses){
+// CC Pending AppFolio Posting Report: All CC expenses from Approved through Processed with attachment links
+async function generateCCReport(expenses){
   const inFlow=expenses.filter(e=>e.ExpenseType==="Credit Card Reconciliation"&&["Approved","Processed"].includes(e.Status));
   if(!inFlow.length){alert("No approved or processed CC transactions found.");return}
+  // Fetch attachment URLs for each expense
+  const attMap={};
+  for(const exp of inFlow){try{const atts=await getAttachments(exp.id);attMap[exp.id]=atts.map(a=>a.url).filter(Boolean)}catch(e){attMap[exp.id]=[]}}
   const rows=[];
   inFlow.forEach(exp=>{
     const li=exp.LineItemsJSON?JSON.parse(exp.LineItemsJSON):[];
     const chargeDate=exp.ChargeDate?new Date(exp.ChargeDate).toLocaleDateString("en-US"):"";
+    const attachLinks=(attMap[exp.id]||[]).join("\n");
     if(li.length>0){
-      li.forEach(l=>rows.push({
+      li.forEach((l,idx)=>rows.push({
         "Charge Date":chargeDate,
         "Card (Last 4)":exp.CardLast4||"",
         "Submitted By":exp.SubmittedByName||exp.SubmittedBy||"",
@@ -1052,6 +1059,7 @@ function generateCCReport(expenses){
         "Description":l.description||"",
         "Amount":+(l.amount||0),
         "Status":exp.Status||"",
+        "Receipts/Docs":idx===0?attachLinks:"",
       }));
     }else{
       rows.push({
@@ -1063,18 +1071,21 @@ function generateCCReport(expenses){
         "Description":exp.Description||"",
         "Amount":+(exp.Amount||0),
         "Status":exp.Status||"",
+        "Receipts/Docs":attachLinks,
       });
     }
   });
   const total=rows.reduce((t,r)=>t+r.Amount,0);
-  rows.push({"Charge Date":"","Card (Last 4)":"","Submitted By":"","Property":"","GL Code":"","Description":"TOTAL","Amount":total,"Status":""});
+  rows.push({"Charge Date":"","Card (Last 4)":"","Submitted By":"","Property":"","GL Code":"","Description":"TOTAL","Amount":total,"Status":"","Receipts/Docs":""});
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.json_to_sheet(rows);
-  ws["!cols"]=[{wch:14},{wch:10},{wch:20},{wch:20},{wch:18},{wch:35},{wch:12},{wch:14}];
+  ws["!cols"]=[{wch:14},{wch:10},{wch:20},{wch:20},{wch:18},{wch:35},{wch:12},{wch:14},{wch:50}];
   const range=XLSX.utils.decode_range(ws["!ref"]);
   for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:6})];if(cell&&typeof cell.v==="number")cell.z="$#,##0.00"}
-  XLSX.utils.book_append_sheet(wb,ws,"CC Reconciliation");
-  const d=new Date();XLSX.writeFile(wb,`CC_Reconciliation_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`);
+  // Make receipt URLs clickable hyperlinks
+  for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:8})];if(cell&&cell.v){const urls=String(cell.v).split("\n").filter(Boolean);if(urls.length===1){cell.l={Target:urls[0],Tooltip:urls[0]}}}}
+  XLSX.utils.book_append_sheet(wb,ws,"CC Pending AppFolio Posting");
+  const d=new Date();XLSX.writeFile(wb,`CC_Pending_AppFolio_Posting_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`);
 }
 
 // Reimbursement Payroll Report: Pending Payment only (Mileage + Reimbursement), grouped by person with subtotals
@@ -1117,10 +1128,13 @@ function generateReimbursementPayrollReport(expenses){
   const d=new Date();XLSX.writeFile(wb,`Reimbursements_Payroll_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`);
 }
 
-// Reimbursement Reconciliation Report: All in-flight Mileage + Reimbursement (Approved → Pending Payment → Paid) with status
-function generateReimbursementReconReport(expenses){
+// Reimbursement Pending AppFolio Posting Report: All in-flight Mileage + Reimbursement with attachment links
+async function generateReimbursementReconReport(expenses){
   const inFlow=expenses.filter(e=>(e.ExpenseType==="Personal Reimbursement"||e.ExpenseType==="Mileage")&&["Approved","Pending Payment","Paid"].includes(e.Status));
   if(!inFlow.length){alert("No reimbursements in the approval-to-paid pipeline found.");return}
+  // Fetch attachment URLs for each expense
+  const attMap={};
+  for(const exp of inFlow){try{const atts=await getAttachments(exp.id);attMap[exp.id]=atts.map(a=>a.url).filter(Boolean)}catch(e){attMap[exp.id]=[]}}
   const rows=[];
   const byPerson={};
   inFlow.forEach(exp=>{
@@ -1134,6 +1148,7 @@ function generateReimbursementReconReport(expenses){
       const isMileage=exp.ExpenseType==="Mileage";
       const li=exp.LineItemsJSON?JSON.parse(exp.LineItemsJSON):[];
       const property=li.length>0?li.map(l=>l.property).filter(Boolean).join(", "):(exp.Property||"");
+      const attachLinks=(attMap[exp.id]||[]).join("\n");
       rows.push({
         "Employee":name,
         "Date":exp.ExpenseDate?new Date(exp.ExpenseDate).toLocaleDateString("en-US"):"",
@@ -1146,20 +1161,23 @@ function generateReimbursementReconReport(expenses){
         "Status":exp.Status||"",
         "Approved By":exp.ApprovedBy||"",
         "Approved Date":exp.ApprovedDate?new Date(exp.ApprovedDate).toLocaleDateString("en-US"):"",
+        "Receipts/Docs":attachLinks,
       });
     });
     const personTotal=exps.reduce((t,e)=>t+(e.Amount||0),0);
-    rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Property":"","Category":"","Description":`SUBTOTAL — ${name}`,"Amount":personTotal,"Status":"","Approved By":"","Approved Date":""});
+    rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Property":"","Category":"","Description":`SUBTOTAL — ${name}`,"Amount":personTotal,"Status":"","Approved By":"","Approved Date":"","Receipts/Docs":""});
   });
   const grandTotal=inFlow.reduce((t,e)=>t+(e.Amount||0),0);
-  rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Property":"","Category":"","Description":"GRAND TOTAL","Amount":grandTotal,"Status":"","Approved By":"","Approved Date":""});
+  rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Property":"","Category":"","Description":"GRAND TOTAL","Amount":grandTotal,"Status":"","Approved By":"","Approved Date":"","Receipts/Docs":""});
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.json_to_sheet(rows);
-  ws["!cols"]=[{wch:22},{wch:12},{wch:15},{wch:20},{wch:20},{wch:18},{wch:30},{wch:12},{wch:14},{wch:20},{wch:14}];
+  ws["!cols"]=[{wch:22},{wch:12},{wch:15},{wch:20},{wch:20},{wch:18},{wch:30},{wch:12},{wch:14},{wch:20},{wch:14},{wch:50}];
   const range=XLSX.utils.decode_range(ws["!ref"]);
   for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:7})];if(cell&&typeof cell.v==="number")cell.z="$#,##0.00"}
-  XLSX.utils.book_append_sheet(wb,ws,"Reimbursement Recon");
-  const d=new Date();XLSX.writeFile(wb,`Reimbursement_Reconciliation_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`);
+  // Make receipt URLs clickable hyperlinks
+  for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:11})];if(cell&&cell.v){const urls=String(cell.v).split("\n").filter(Boolean);if(urls.length===1){cell.l={Target:urls[0],Tooltip:urls[0]}}}}
+  XLSX.utils.book_append_sheet(wb,ws,"Reimb Pending AppFolio Posting");
+  const d=new Date();XLSX.writeFile(wb,`Reimbursements_Pending_AppFolio_Posting_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`);
 }
 
 // ============================================================
@@ -1749,17 +1767,17 @@ function ExpenseManager(){
           }}/>}
 
         {tab==="queue"&&isAdmin&&<>
-          <div style={{display:"flex",gap:"8px",marginBottom:"12px",flexWrap:"wrap"}}>
-            <Btn v="secondary" onClick={()=>generateCCReport(expenses)} style={{fontSize:"10px",padding:"5px 12px"}}>CC Reconciliation (.xlsx)</Btn>
-            <Btn v="secondary" onClick={()=>generateReimbursementPayrollReport(expenses)} style={{fontSize:"10px",padding:"5px 12px"}}>Reimbursements — Payroll (.xlsx)</Btn>
-            <Btn v="secondary" onClick={()=>generateReimbursementReconReport(expenses)} style={{fontSize:"10px",padding:"5px 12px"}}>Reimbursements — Reconciliation (.xlsx)</Btn>
-          </div>
           <ExpenseList expenses={expenses} title="Pending Approval" filter={e=>e.Status==="Submitted"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
-          <ExpenseList expenses={expenses} title="Approved — Awaiting Processing" filter={e=>e.Status==="Approved"}
-            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
+          <ExpenseList expenses={expenses} title="Approved — Awaiting Posting in AppFolio" filter={e=>e.Status==="Approved"}
+            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}
+            headerActions={<>
+              <Btn v="secondary" onClick={()=>generateCCReport(expenses)} style={{fontSize:"9px",padding:"3px 10px"}}>CC — Pending AppFolio Posting (.xlsx)</Btn>
+              <Btn v="secondary" onClick={()=>generateReimbursementReconReport(expenses)} style={{fontSize:"9px",padding:"3px 10px"}}>Reimbursements — Pending AppFolio Posting (.xlsx)</Btn>
+            </>}/>
           <ExpenseList expenses={expenses} title="Pending Payment" filter={e=>e.Status==="Pending Payment"}
-            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
+            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}
+            headerActions={<Btn v="secondary" onClick={()=>generateReimbursementPayrollReport(expenses)} style={{fontSize:"9px",padding:"3px 10px"}}>Reimbursements — Payroll (.xlsx)</Btn>}/>
           <ExpenseList expenses={expenses} title="Rejected — Awaiting Resubmission" filter={e=>e.Status==="Rejected"}
             userRole={userRole} userEmail={userEmail} onView={setViewExpense} onDelete={handleDelete} isSuperAdmin={isSuperAdmin}/>
           <ExpenseList expenses={expenses} title="Recently Completed" filter={e=>["Processed","Paid"].includes(e.Status)}
