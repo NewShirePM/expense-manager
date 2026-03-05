@@ -801,6 +801,7 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
   const[editSFAddress,setEditSFAddress]=useState(expense.SFAddress||"");
   const[editDate,setEditDate]=useState(expense.ExpenseDate?expense.ExpenseDate.slice(0,10):"");
   const[editDescription,setEditDescription]=useState(expense.Description||"");
+  const[editExpenseType,setEditExpenseType]=useState(expense.ExpenseType||"");
   const[editLineItems,setEditLineItems]=useState(lineItems.map(li=>({...li})));
   const updateLI=(idx,field,val)=>{const n=[...editLineItems];n[idx]={...n[idx],[field]:val};if(field==="property"&&val!=="Single Family"){n[idx].sfAddress=""}setEditLineItems(n)};
   const mileStops=expense.MileageStopsJSON?JSON.parse(expense.MileageStopsJSON):[];
@@ -845,9 +846,12 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
 
       {/* Header */}
       <div style={{background:B.teal900,padding:"12px 16px",borderBottom:`2px solid ${STATUS_COLORS[expense.Status]||B.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",borderRadius:"8px 8px 0 0"}}>
-        <div>
+        <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
           <StatusBadge status={expense.Status}/>
-          <span style={{fontSize:"14px",fontWeight:800,color:B.white,marginLeft:"8px"}}>{expense.ExpenseType}</span>
+          {canAdminEdit?<select value={editExpenseType} onChange={e=>setEditExpenseType(e.target.value)} style={{fontSize:"14px",fontWeight:800,color:"#FFFFFF",background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:"4px",padding:"2px 8px",cursor:"pointer"}}>
+            {DEFAULT_EXPENSE_TYPES.map(t=><option key={t} value={t} style={{color:"#28434C"}}>{t}</option>)}
+          </select>
+          :<span style={{fontSize:"14px",fontWeight:800,color:B.white}}>{expense.ExpenseType}</span>}
         </div>
         <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
           <span style={{fontSize:"20px",fontWeight:900,color:B.gold}}>{fmtMoney(expense.Amount)}</span>
@@ -957,8 +961,8 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
         {/* Actions */}
         <div style={{marginTop:"16px",display:"flex",gap:"8px",justifyContent:"flex-end",flexWrap:"wrap",borderTop:`1px solid ${B.teal600}`,paddingTop:"12px"}}>
           {userRole==="admin"&&expense.Status==="Submitted"&&onAction&&<>
-            <Btn style={{background:"#4A78B0",color:"#fff"}} onClick={()=>onAction(expense.id,"save_edits",null,{editProperty,editLineItems,editDate,editDescription})} disabled={actionLoading}>Save Edits</Btn>
-            <Btn style={{background:B.ok}} onClick={()=>onAction(expense.id,"approve",null,{editProperty,editLineItems,editDate,editDescription})} disabled={actionLoading}>{"\u2713"} Approve</Btn>
+            <Btn style={{background:"#4A78B0",color:"#fff"}} onClick={()=>onAction(expense.id,"save_edits",null,{editProperty,editLineItems,editDate,editDescription,editExpenseType})} disabled={actionLoading}>Save Edits</Btn>
+            <Btn style={{background:B.ok}} onClick={()=>onAction(expense.id,"approve",null,{editProperty,editLineItems,editDate,editDescription,editExpenseType})} disabled={actionLoading}>{"\u2713"} Approve</Btn>
             <Btn style={{background:B.no}} onClick={()=>{const n=prompt("Rejection reason (optional):");if(n!==null)onAction(expense.id,"reject",n)}} disabled={actionLoading}>{"\u2717"} Reject</Btn>
           </>}
           {(userRole==="admin"||userRole==="accounting")&&expense.Status==="Approved"&&onAction&&
@@ -1583,6 +1587,7 @@ function ExpenseManager(){
       if(action==="save_edits"){
         // Save admin edits without changing status
         if(adminEdits){
+          if(adminEdits.editExpenseType&&adminEdits.editExpenseType!==expense.ExpenseType){fields.ExpenseType=adminEdits.editExpenseType;fields.Title=adminEdits.editExpenseType}
           if(adminEdits.editProperty&&adminEdits.editProperty!==expense.Property)fields.Property=adminEdits.editProperty;
           if(adminEdits.editDate&&adminEdits.editDate!==expense.ExpenseDate?.slice(0,10))fields.ExpenseDate=adminEdits.editDate;
           if(adminEdits.editDescription!==undefined&&adminEdits.editDescription!==expense.Description)fields.Description=adminEdits.editDescription;
@@ -1595,8 +1600,9 @@ function ExpenseManager(){
         if(Object.keys(fields).length===0){setToast({message:"No changes to save",type:"info"});setActionLoading(false);return}
       }else if(action==="approve"){
         fields.Status="Approved";fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
-        // Apply admin edits to category/property if changed
+        // Apply admin edits if changed
         if(adminEdits){
+          if(adminEdits.editExpenseType&&adminEdits.editExpenseType!==expense.ExpenseType){fields.ExpenseType=adminEdits.editExpenseType;fields.Title=adminEdits.editExpenseType}
           if(adminEdits.editProperty&&adminEdits.editProperty!==expense.Property)fields.Property=adminEdits.editProperty;
           if(adminEdits.editDate&&adminEdits.editDate!==expense.ExpenseDate?.slice(0,10))fields.ExpenseDate=adminEdits.editDate;
           if(adminEdits.editDescription!==undefined&&adminEdits.editDescription!==expense.Description)fields.Description=adminEdits.editDescription;
