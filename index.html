@@ -785,6 +785,9 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
   const[attLoading,setAttLoading]=useState(true);
   const[previews,setPreviews]=useState({});// {fileId: blobUrl}
   const[expandedImg,setExpandedImg]=useState(null);
+  const[adminFiles,setAdminFiles]=useState([]);
+  const[uploading,setUploading]=useState(false);
+  const adminFileRef=useRef(null);
 
   const isCC=expense.ExpenseType==="Credit Card Reconciliation";
   const isMileage=expense.ExpenseType==="Mileage";
@@ -958,11 +961,29 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
            </div>}
         </div>}
 
+        {/* Admin file upload — add receipts/docs during review */}
+        {canAdminEdit&&<div style={{marginTop:"10px"}}>
+          <input type="file" ref={adminFileRef} multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style={{display:"none"}} onChange={e=>{if(e.target.files.length)setAdminFiles(prev=>[...prev,...Array.from(e.target.files)]);e.target.value=""}}/>
+          <div onClick={()=>adminFileRef.current?.click()} style={{border:`2px dashed ${B.border}`,borderRadius:"6px",padding:"12px",textAlign:"center",cursor:"pointer",transition:"all 0.2s",background:adminFiles.length>0?B.gold50:B.teal50}}
+            onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor=B.gold;e.currentTarget.style.background=B.gold50}}
+            onDragLeave={e=>{e.currentTarget.style.borderColor=B.border;e.currentTarget.style.background=adminFiles.length>0?B.gold50:B.teal50}}
+            onDrop={e=>{e.preventDefault();e.currentTarget.style.borderColor=B.border;if(e.dataTransfer.files.length)setAdminFiles(prev=>[...prev,...Array.from(e.dataTransfer.files)])}}>
+            <div style={{fontSize:"11px",color:B.teal500,fontWeight:600}}>+ Add Receipts / Documents</div>
+            <div style={{fontSize:"9px",color:B.teal400,marginTop:"2px"}}>Click or drag files here</div>
+          </div>
+          {adminFiles.length>0&&<div style={{marginTop:"6px",display:"flex",flexWrap:"wrap",gap:"4px"}}>
+            {adminFiles.map((f,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:"4px",background:B.teal50,border:`1px solid ${B.teal100}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.teal700}}>
+              <span>{f.name.length>25?f.name.slice(0,23)+"...":f.name}</span>
+              <button onClick={e=>{e.stopPropagation();setAdminFiles(prev=>prev.filter((_,j)=>j!==i))}} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"12px",fontWeight:700,padding:0}}>{"\u00d7"}</button>
+            </div>)}
+          </div>}
+        </div>}
+
         {/* Actions */}
         <div style={{marginTop:"16px",display:"flex",gap:"8px",justifyContent:"flex-end",flexWrap:"wrap",borderTop:`1px solid ${B.teal600}`,paddingTop:"12px"}}>
           {userRole==="admin"&&expense.Status==="Submitted"&&onAction&&<>
-            <Btn style={{background:"#4A78B0",color:"#fff"}} onClick={()=>onAction(expense.id,"save_edits",null,{editProperty,editLineItems,editDate,editDescription,editExpenseType})} disabled={actionLoading}>Save Edits</Btn>
-            <Btn style={{background:B.ok}} onClick={()=>onAction(expense.id,"approve",null,{editProperty,editLineItems,editDate,editDescription,editExpenseType})} disabled={actionLoading}>{"\u2713"} Approve</Btn>
+            <Btn style={{background:"#4A78B0",color:"#fff"}} onClick={()=>onAction(expense.id,"save_edits",null,{editProperty,editLineItems,editDate,editDescription,editExpenseType,adminFiles})} disabled={actionLoading||uploading}>{uploading?"Uploading...":"Save Edits"}</Btn>
+            <Btn style={{background:B.ok}} onClick={()=>onAction(expense.id,"approve",null,{editProperty,editLineItems,editDate,editDescription,editExpenseType,adminFiles})} disabled={actionLoading||uploading}>{uploading?"Uploading...":`\u2713 Approve`}</Btn>
             <Btn style={{background:B.no}} onClick={()=>{const n=prompt("Rejection reason (optional):");if(n!==null)onAction(expense.id,"reject",n)}} disabled={actionLoading}>{"\u2717"} Reject</Btn>
           </>}
           {(userRole==="admin"||userRole==="accounting")&&expense.Status==="Approved"&&onAction&&
@@ -1626,6 +1647,13 @@ function ExpenseManager(){
         fields.Status="Paid";fields.PaidDate=new Date().toISOString();
       }
       await updateExpense(itemId,fields);
+
+      // Upload admin-added files if any
+      if(adminEdits?.adminFiles?.length>0){
+        for(const f of adminEdits.adminFiles){
+          try{await uploadAttachment(itemId,f)}catch(e){console.warn("Admin attachment upload failed:",e)}
+        }
+      }
 
       // Send email notifications (fire-and-forget)
       if(expense&&action!=="save_edits"){
