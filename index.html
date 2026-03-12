@@ -923,12 +923,12 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
           </div>
         </div>}
 
-        {/* Attachments — inline preview */}
-        {!isMileage&&<div style={{marginTop:"12px"}}>
+        {/* Attachments — inline preview + admin upload */}
+        <div style={{marginTop:"12px"}}>
           <div style={{fontSize:"10px",fontWeight:800,color:B.goldDim,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"6px"}}>Attachments</div>
           {attLoading?<div style={{fontSize:"11px",color:B.teal400}}>Loading attachments...</div>:
-           attachments.length===0?<div style={{fontSize:"11px",color:B.teal400}}>No attachments</div>:
-           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:"8px"}}>
+           <>
+           {attachments.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:"8px",marginBottom:"8px"}}>
              {attachments.map(f=>{
                const pv=previews[f.id];
                const isImage=pv?.isImage;
@@ -937,7 +937,6 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
                const openFile=()=>{
                  if(!pv)return;
                  if(isImage){setExpandedImg(pv.dataUrl);return}
-                 // Open PDFs and other docs in new tab via blob URL
                  try{
                    const byteStr=atob(pv.dataUrl.split(",")[1]);
                    const ab=new ArrayBuffer(byteStr.length);
@@ -959,25 +958,29 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
                </div>;
              })}
            </div>}
-        </div>}
+           {attachments.length===0&&!canAdminEdit&&<div style={{fontSize:"11px",color:B.teal400}}>No attachments</div>}
+           </>}
 
-        {/* Admin file upload — add receipts/docs during review */}
-        {canAdminEdit&&<div style={{marginTop:"10px"}}>
-          <input type="file" ref={adminFileRef} multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style={{display:"none"}} onChange={e=>{if(e.target.files.length)setAdminFiles(prev=>[...prev,...Array.from(e.target.files)]);e.target.value=""}}/>
-          <div onClick={()=>adminFileRef.current?.click()} style={{border:`2px dashed ${B.border}`,borderRadius:"6px",padding:"12px",textAlign:"center",cursor:"pointer",transition:"all 0.2s",background:adminFiles.length>0?B.gold50:B.teal50}}
-            onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor=B.gold;e.currentTarget.style.background=B.gold50}}
-            onDragLeave={e=>{e.currentTarget.style.borderColor=B.border;e.currentTarget.style.background=adminFiles.length>0?B.gold50:B.teal50}}
-            onDrop={e=>{e.preventDefault();e.currentTarget.style.borderColor=B.border;if(e.dataTransfer.files.length)setAdminFiles(prev=>[...prev,...Array.from(e.dataTransfer.files)])}}>
-            <div style={{fontSize:"11px",color:B.teal500,fontWeight:600}}>+ Add Receipts / Documents</div>
-            <div style={{fontSize:"9px",color:B.teal400,marginTop:"2px"}}>Click or drag files here</div>
-          </div>
-          {adminFiles.length>0&&<div style={{marginTop:"6px",display:"flex",flexWrap:"wrap",gap:"4px"}}>
-            {adminFiles.map((f,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:"4px",background:B.teal50,border:`1px solid ${B.teal100}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.teal700}}>
-              <span>{f.name.length>25?f.name.slice(0,23)+"...":f.name}</span>
-              <button onClick={e=>{e.stopPropagation();setAdminFiles(prev=>prev.filter((_,j)=>j!==i))}} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"12px",fontWeight:700,padding:0}}>{"\u00d7"}</button>
-            </div>)}
-          </div>}
-        </div>}
+          {/* Admin file upload */}
+          {canAdminEdit&&<>
+            <input type="file" ref={adminFileRef} multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style={{display:"none"}} onChange={e=>{const newFiles=Array.from(e.target.files||[]);if(newFiles.length)setAdminFiles(prev=>[...prev,...newFiles]);e.target.value=""}}/>
+            <div style={{border:`2px dashed ${adminFiles.length>0?B.gold:B.border}`,borderRadius:"6px",padding:"12px",textAlign:"center",cursor:"pointer",transition:"all 0.2s",background:adminFiles.length>0?B.gold50:B.teal50}}
+              onClick={e=>{e.stopPropagation();adminFileRef.current?.click()}}
+              onDragOver={e=>{e.preventDefault();e.stopPropagation();e.currentTarget.style.borderColor=B.gold;e.currentTarget.style.background=B.gold50}}
+              onDragLeave={e=>{e.stopPropagation();e.currentTarget.style.borderColor=adminFiles.length>0?B.gold:B.border;e.currentTarget.style.background=adminFiles.length>0?B.gold50:B.teal50}}
+              onDrop={e=>{e.preventDefault();e.stopPropagation();e.currentTarget.style.borderColor=adminFiles.length>0?B.gold:B.border;const newFiles=Array.from(e.dataTransfer.files||[]);if(newFiles.length)setAdminFiles(prev=>[...prev,...newFiles])}}>
+              <div style={{fontSize:"11px",color:B.teal500,fontWeight:600}}>+ Add Receipts / Documents</div>
+              <div style={{fontSize:"9px",color:B.teal400,marginTop:"2px"}}>Click or drag files here</div>
+            </div>
+            {adminFiles.length>0&&<div style={{marginTop:"6px",display:"flex",flexWrap:"wrap",gap:"4px"}}>
+              {adminFiles.map((f,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:"4px",background:B.gold50,border:`1px solid ${B.gold}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.goldDim}}>
+                <span>📎 {f.name.length>25?f.name.slice(0,23)+"...":f.name}</span>
+                <span style={{fontSize:"9px",color:B.teal400,marginLeft:"2px"}}>({(f.size/1024).toFixed(0)}KB)</span>
+                <button onClick={e=>{e.stopPropagation();setAdminFiles(prev=>prev.filter((_,j)=>j!==i))}} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"12px",fontWeight:700,padding:"0 0 0 4px"}}>{"\u00d7"}</button>
+              </div>)}
+            </div>}
+          </>}
+        </div>
 
         {/* Actions */}
         <div style={{marginTop:"16px",display:"flex",gap:"8px",justifyContent:"flex-end",flexWrap:"wrap",borderTop:`1px solid ${B.teal600}`,paddingTop:"12px"}}>
@@ -1618,7 +1621,7 @@ function ExpenseManager(){
             if(changed)fields.LineItemsJSON=JSON.stringify(adminEdits.editLineItems);
           }
         }
-        if(Object.keys(fields).length===0){setToast({message:"No changes to save",type:"info"});setActionLoading(false);return}
+        if(Object.keys(fields).length===0&&!(adminEdits?.adminFiles?.length>0)){setToast({message:"No changes to save",type:"info"});setActionLoading(false);return}
       }else if(action==="approve"){
         fields.Status="Approved";fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
         // Apply admin edits if changed
