@@ -776,7 +776,7 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
           <div style={{width:"18px",height:"18px",borderRadius:"3px",border:`2px solid ${alreadyInAppFolio?B.ok:B.border}`,background:alreadyInAppFolio?B.ok:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s"}}>
             {alreadyInAppFolio&&<span style={{color:"#fff",fontSize:"12px",fontWeight:900}}>✓</span>}
           </div>
-          Has this expense already been entered in AppFolio?
+          Has this expense already been entered in AppFolio under a Work Order?
         </label>
         {alreadyInAppFolio&&<div style={{fontSize:"10px",color:B.goldDim,marginTop:"6px",marginLeft:"26px",fontWeight:600}}>⚠ This will be flagged for admin to confirm during approval.</div>}
       </div>}
@@ -1817,15 +1817,33 @@ function ExpenseManager(){
           editExpense={reviewExpense} adminReview={true}
           onCancel={()=>setReviewExpense(null)}
           onApprove={async(itemId,fields)=>{
-            fields.Status="Approved";fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
-            await updateExpense(itemId,fields);
             const expense=expenses.find(e=>e.id===itemId);
-            sendNotificationEmail({...expense,...fields},"approved",{
+            const isCC=fields.ExpenseType==="Credit Card Reconciliation"||expense?.ExpenseType==="Credit Card Reconciliation";
+            const flaggedAppFolio=fields.AlreadyInAppFolio==="Yes"||expense?.AlreadyInAppFolio==="Yes";
+
+            fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
+
+            if(flaggedAppFolio){
+              // Auto-advance past Approved since it's already in AppFolio
+              if(isCC){
+                fields.Status="Processed";fields.ProcessedBy=userEmail;fields.ProcessedDate=new Date().toISOString();
+              }else{
+                fields.Status="Pending Payment";fields.ProcessedBy=userEmail;fields.ProcessedDate=new Date().toISOString();
+              }
+            }else{
+              fields.Status="Approved";
+            }
+
+            await updateExpense(itemId,fields);
+
+            // Send appropriate email
+            const emailAction=flaggedAppFolio?(isCC?"processed":"pending_payment"):"approved";
+            sendNotificationEmail({...expense,...fields},emailAction,{
               routing:routing||DEFAULT_ROUTING,settings,users,
               approverName:getUserName()||userEmail,expenseId:itemId.toString()
             }).catch(e=>console.warn("Email error:",e));
             setReviewExpense(null);await refresh();
-            setToast({message:"Expense approved!",type:"success"});
+            setToast({message:flaggedAppFolio?`Expense approved & moved to ${isCC?"Processed":"Pending Payment"} (already in AppFolio)`:"Expense approved!",type:"success"});
           }}
           onReject={async(itemId,fields,notes)=>{
             fields.Status="Rejected";fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
