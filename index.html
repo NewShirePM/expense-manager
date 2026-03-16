@@ -413,7 +413,7 @@ function Toast({message,type="info",onClose}){
 // ============================================================
 // EXPENSE FORM COMPONENT
 // ============================================================
-function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,employees,isAdmin}){
+function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,employees,isAdmin,adminReview,onApprove,onReject,onSaveEdits}){
   const s=settings||DEFAULT_SETTINGS;
   const cats=sortCats(s.categories||DEFAULT_CATEGORIES);
   const props=s.properties||DEFAULT_PROPERTIES;
@@ -457,6 +457,8 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
   // On behalf of (admin only)
   const[onBehalfOf,setOnBehalfOf]=useState("");
   const empList=(employees||[]).filter(e=>e.active&&e.email).sort((a,b)=>a.name.localeCompare(b.name));
+  // AppFolio flag
+  const[alreadyInAppFolio,setAlreadyInAppFolio]=useState(editExpense?.AlreadyInAppFolio||false);
 
   // Load existing attachments for edit mode
   useEffect(()=>{
@@ -525,6 +527,43 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
   };
   const removeFile=(idx)=>setFiles(files.filter((_,i)=>i!==idx));
 
+  // Build fields object from current form state
+  const buildFields=()=>{
+    const fields={
+      Title:expType,
+      ExpenseType:expType,
+      ExpenseDate:date+"T00:00:00Z",
+      Description:description||`${expType} - ${vendor||""}`.trim(),
+      Vendor:isMileage?"":vendor,
+      AlreadyInAppFolio:alreadyInAppFolio?"Yes":"No",
+    };
+    if(hasLineItems){
+      fields.LineItemsJSON=JSON.stringify(lineItems.map(l=>({
+        category:l.category,description:l.description,
+        amount:parseFloat(l.amount)||0,property:l.property,
+        sfAddress:l.sfAddress,taxable:l.taxable
+      })));
+      fields.Amount=grandTotal;
+      fields.Tax=taxNum;
+      fields.Tip=tipNum;
+      fields.Category=lineItems[0]?.category||"";
+    }
+    if(isMileage){
+      fields.MileageStopsJSON=JSON.stringify(stops.filter(s=>s.trim()));
+      fields.Miles=parseFloat(miles)||0;
+      fields.MileageRate=s.mileageRate||0.70;
+      fields.Amount=mileageTotal;
+      fields.Category=mileCategory;
+      fields.MileagePropertiesJSON=JSON.stringify(mileProperties);
+      if(mileProperties.includes("Single Family")&&mileSfAddress)fields.MileSfAddress=mileSfAddress;
+    }
+    if(isCC){
+      fields.CardLast4=ccLast4;
+      fields.ChargeDate=ccDate?ccDate+"T00:00:00Z":"";
+    }
+    return fields;
+  };
+
   // Submit
   const handleSubmit=async()=>{
     if(!expType){setError("Select an expense type");return}
@@ -532,60 +571,23 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
     if(hasLineItems&&lineItems.every(l=>!l.amount)){setError("Add at least one line item");return}
     if(isMileage&&!miles){setError("Miles are required");return}
     if(isCC&&!ccLast4){setError("Card last 4 digits required");return}
+    if((isCC||isReimb)&&files.length===0&&existingAttachments.length===0&&!adminReview){setError("Receipt/document attachment is required for "+expType);return}
 
     setSubmitting(true);setError(null);
     try{
-      const fields={
-        Title:expType,
-        ExpenseType:expType,
-        ExpenseDate:date+"T00:00:00Z",
-        Description:description||`${expType} - ${vendor||""}`.trim(),
-        Vendor:isMileage?"":vendor,
-        Status:"Submitted",
-        SubmittedBy:onBehalfOf?onBehalfOf:userEmail,
-        SubmittedByName:onBehalfOf?(empList.find(e=>e.email===onBehalfOf)?.name||onBehalfOf):(getUserName()||userEmail),
-        SubmittedDate:new Date().toISOString(),
-      };
-
-      if(hasLineItems){
-        fields.LineItemsJSON=JSON.stringify(lineItems.map(l=>({
-          category:l.category,description:l.description,
-          amount:parseFloat(l.amount)||0,property:l.property,
-          sfAddress:l.sfAddress,taxable:l.taxable
-        })));
-        fields.Amount=grandTotal;
-        fields.Tax=taxNum;
-        fields.Tip=tipNum;
-        fields.Category=lineItems[0]?.category||"";
-      }
-
-      if(isMileage){
-        fields.MileageStopsJSON=JSON.stringify(stops.filter(s=>s.trim()));
-        fields.Miles=parseFloat(miles)||0;
-        fields.MileageRate=s.mileageRate||0.70;
-        fields.Amount=mileageTotal;
-        fields.Category=mileCategory;
-        fields.MileagePropertiesJSON=JSON.stringify(mileProperties);
-        if(mileProperties.includes("Single Family")&&mileSfAddress){
-          fields.MileSfAddress=mileSfAddress;
-        }
-      }
-
-      if(isCC){
-        fields.CardLast4=ccLast4;
-        fields.ChargeDate=ccDate?ccDate+"T00:00:00Z":"";
-      }
+      const fields=buildFields();
+      fields.Status="Submitted";
+      fields.SubmittedBy=onBehalfOf?onBehalfOf:userEmail;
+      fields.SubmittedByName=onBehalfOf?(empList.find(e=>e.email===onBehalfOf)?.name||onBehalfOf):(getUserName()||userEmail);
+      fields.SubmittedDate=new Date().toISOString();
 
       const result=isEdit?await (async()=>{
-        // Re-submit: update existing item, reset status to Submitted
-        fields.Status="Submitted";
-        fields.RejectionNotes="";// clear any prior rejection
+        fields.RejectionNotes="";
         await updateExpense(editExpense.id,fields);
         return{id:editExpense.id};
       })():await createExpense(fields);
       const newId=result?.id;
 
-      // Upload attachments
       if(newId&&files.length>0){
         for(const f of files){
           try{await uploadAttachment(newId,f)}catch(e){console.warn("Attachment upload failed:",e)}
@@ -595,6 +597,32 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
       onSubmit&&onSubmit({fields,expenseId:newId});
     }catch(e){
       setError("Submit failed: "+e.message);
+    }finally{setSubmitting(false)}
+  };
+
+  // Admin review actions
+  const handleAdminAction=async(action)=>{
+    if(!expType){setError("Select an expense type");return}
+    setSubmitting(true);setError(null);
+    try{
+      const fields=buildFields();
+      // Upload any new files first
+      if(editExpense?.id&&files.length>0){
+        for(const f of files){
+          try{await uploadAttachment(editExpense.id,f)}catch(e){console.warn("Attachment upload failed:",e)}
+        }
+      }
+      if(action==="approve"){
+        onApprove&&await onApprove(editExpense.id,fields);
+      }else if(action==="reject"){
+        const notes=prompt("Rejection reason (optional):");
+        if(notes===null){setSubmitting(false);return}
+        onReject&&await onReject(editExpense.id,fields,notes);
+      }else if(action==="save"){
+        onSaveEdits&&await onSaveEdits(editExpense.id,fields);
+      }
+    }catch(e){
+      setError("Action failed: "+e.message);
     }finally{setSubmitting(false)}
   };
 
@@ -608,7 +636,12 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
 
   return <Card>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}}>
-      <h3 style={{fontSize:"14px",fontWeight:800,color:B.teal700,textTransform:"uppercase",letterSpacing:"1px"}}>{isEdit?"Edit Expense":"Submit Expense"}</h3>
+      <h3 style={{fontSize:"14px",fontWeight:800,color:B.teal700,textTransform:"uppercase",letterSpacing:"1px"}}>{adminReview?"Review Expense":isEdit?"Edit Expense":"Submit Expense"}</h3>
+      {adminReview&&editExpense&&<div style={{fontSize:"11px",color:B.teal400,marginTop:"4px",marginBottom:"4px"}}>Submitted by <b style={{color:B.text}}>{editExpense.SubmittedByName||editExpense.SubmittedBy}</b> on {editExpense.SubmittedDate?new Date(editExpense.SubmittedDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"} — All fields are editable. Changes are saved on Approve or Save Edits.</div>}
+      {adminReview&&editExpense?.AlreadyInAppFolio==="Yes"&&<div style={{background:"rgba(212,150,10,0.12)",border:"1px solid rgba(212,150,10,0.4)",borderRadius:"6px",padding:"10px 12px",marginTop:"6px",marginBottom:"4px"}}>
+        <div style={{fontSize:"12px",fontWeight:800,color:"#D4960A"}}>⚠ ALREADY IN APPFOLIO</div>
+        <div style={{fontSize:"11px",color:B.text,marginTop:"2px"}}>Submitter indicated this expense was already entered in AppFolio. Please confirm it exists before approving.</div>
+      </div>}
       {onCancel&&<Btn v="ghost" onClick={onCancel}>← Back</Btn>}
     </div>
 
@@ -625,7 +658,7 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
 
     {/* Expense Type */}
     <F label="Expense Type" required>
-      {isEdit?<Inp value={expType} disabled style={{opacity:0.7,cursor:"not-allowed"}}/>
+      {isEdit&&!adminReview?<Inp value={expType} disabled style={{opacity:0.7,cursor:"not-allowed"}}/>
         :<Sel value={expType} onChange={e=>handleTypeChange(e.target.value)} options={s.expenseTypes||DEFAULT_EXPENSE_TYPES} placeholder="Select type..."/>}
     </F>
 
@@ -737,9 +770,20 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
         <Txt value={description} onChange={e=>setDescription(e.target.value)} placeholder="Additional details..." rows={2}/>
       </F>
 
-      {/* ── ATTACHMENTS (hidden for Mileage) ── */}
+      {/* ── APPFOLIO FLAG (CC and Reimbursement only) ── */}
+      {(isCC||isReimb)&&!adminReview&&<div style={{marginTop:"8px",background:B.gold50,border:`1px solid ${B.gold}`,borderRadius:"6px",padding:"10px 12px"}}>
+        <label style={{display:"flex",alignItems:"center",gap:"8px",cursor:"pointer",fontSize:"12px",color:B.text,fontWeight:600}} onClick={()=>setAlreadyInAppFolio(!alreadyInAppFolio)}>
+          <div style={{width:"18px",height:"18px",borderRadius:"3px",border:`2px solid ${alreadyInAppFolio?B.ok:B.border}`,background:alreadyInAppFolio?B.ok:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s"}}>
+            {alreadyInAppFolio&&<span style={{color:"#fff",fontSize:"12px",fontWeight:900}}>✓</span>}
+          </div>
+          Has this expense already been entered in AppFolio?
+        </label>
+        {alreadyInAppFolio&&<div style={{fontSize:"10px",color:B.goldDim,marginTop:"6px",marginLeft:"26px",fontWeight:600}}>⚠ This will be flagged for admin to confirm during approval.</div>}
+      </div>}
+
+      {/* ── ATTACHMENTS (hidden for Mileage, required for CC/Reimbursement) ── */}
       {!isMileage&&<div style={{marginTop:"8px"}}>
-        <label style={lCss}>Attachments ({files.length}/5)</label>
+        <label style={lCss}>Attachments ({files.length}/5) {(isCC||isReimb)&&<span style={{color:B.no,fontWeight:800}}>*Required</span>}</label>
         <div style={{display:"flex",gap:"6px",marginTop:"4px"}}>
           <input ref={fileRef} type="file" accept="image/*,.pdf" multiple hidden onChange={e=>handleFiles(e.target.files)}/>
           <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={e=>{handleFiles(e.target.files);e.target.value=""}}/>
@@ -768,10 +812,16 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
         <div style={{fontSize:"9px",color:B.teal400,marginTop:"4px"}}>Existing attachments are preserved. New uploads will be added alongside them.</div>
       </div>}
 
-      {/* Submit */}
-      <div style={{display:"flex",justifyContent:"flex-end",gap:"8px",marginTop:"16px",borderTop:`1px solid ${B.teal600}`,paddingTop:"12px"}}>
+      {/* Submit / Admin Review Actions */}
+      <div style={{display:"flex",justifyContent:"flex-end",gap:"8px",marginTop:"16px",borderTop:`1px solid ${B.teal600}`,paddingTop:"12px",flexWrap:"wrap"}}>
         {onCancel&&<Btn v="secondary" onClick={onCancel}>Cancel</Btn>}
-        <Btn onClick={handleSubmit} disabled={submitting}>{submitting?(isEdit?"Saving...":"Submitting..."):(isEdit?"Save & Resubmit":"Submit Expense")}</Btn>
+        {adminReview?<>
+          <Btn style={{background:"#4A78B0",color:"#fff"}} onClick={()=>handleAdminAction("save")} disabled={submitting}>{submitting?"Saving...":"Save Edits"}</Btn>
+          <Btn style={{background:B.ok,color:"#fff"}} onClick={()=>handleAdminAction("approve")} disabled={submitting}>{submitting?"...":"\u2713 Approve"}</Btn>
+          <Btn style={{background:B.no,color:"#fff"}} onClick={()=>handleAdminAction("reject")} disabled={submitting}>{submitting?"...":"\u2717 Reject"}</Btn>
+        </>:
+          <Btn onClick={handleSubmit} disabled={submitting}>{submitting?(isEdit?"Saving...":"Submitting..."):(isEdit?"Save & Resubmit":"Submit Expense")}</Btn>
+        }
       </div>
     </>}
   </Card>;
@@ -783,30 +833,14 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
 function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isSuperAdmin,actionLoading,settings}){
   const[attachments,setAttachments]=useState([]);
   const[attLoading,setAttLoading]=useState(true);
-  const[previews,setPreviews]=useState({});// {fileId: blobUrl}
+  const[previews,setPreviews]=useState({});
   const[expandedImg,setExpandedImg]=useState(null);
-  const[adminFiles,setAdminFiles]=useState([]);
-  const[uploading,setUploading]=useState(false);
-  const adminFileRef=useRef(null);
 
   const isCC=expense.ExpenseType==="Credit Card Reconciliation";
   const isMileage=expense.ExpenseType==="Mileage";
   const isOwner=expense.SubmittedBy?.toLowerCase()===userEmail?.toLowerCase();
   const canDelete=isSuperAdmin||(isOwner&&expense.Status==="Submitted");
   const lineItems=expense.LineItemsJSON?JSON.parse(expense.LineItemsJSON):[];
-  const canAdminEdit=userRole==="admin"&&expense.Status==="Submitted";
-  const s=settings||{};
-  const cats=sortCats(s.categories||[]);
-  const props=s.properties||[];
-  // Admin editable overrides for category and property
-  const[editCategory,setEditCategory]=useState(expense.Category||"");
-  const[editProperty,setEditProperty]=useState(expense.Property||"");
-  const[editSFAddress,setEditSFAddress]=useState(expense.SFAddress||"");
-  const[editDate,setEditDate]=useState(expense.ExpenseDate?expense.ExpenseDate.slice(0,10):"");
-  const[editDescription,setEditDescription]=useState(expense.Description||"");
-  const[editExpenseType,setEditExpenseType]=useState(expense.ExpenseType||"");
-  const[editLineItems,setEditLineItems]=useState(lineItems.map(li=>({...li})));
-  const updateLI=(idx,field,val)=>{const n=[...editLineItems];n[idx]={...n[idx],[field]:val};if(field==="property"&&val!=="Single Family"){n[idx].sfAddress=""}setEditLineItems(n)};
   const mileStops=expense.MileageStopsJSON?JSON.parse(expense.MileageStopsJSON):[];
   const mileProps=expense.MileagePropertiesJSON?JSON.parse(expense.MileagePropertiesJSON):[];
 
@@ -851,10 +885,7 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
       <div style={{background:B.teal900,padding:"12px 16px",borderBottom:`2px solid ${STATUS_COLORS[expense.Status]||B.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",borderRadius:"8px 8px 0 0"}}>
         <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
           <StatusBadge status={expense.Status}/>
-          {canAdminEdit?<select value={editExpenseType} onChange={e=>setEditExpenseType(e.target.value)} style={{fontSize:"14px",fontWeight:800,color:"#FFFFFF",background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:"4px",padding:"2px 8px",cursor:"pointer"}}>
-            {DEFAULT_EXPENSE_TYPES.map(t=><option key={t} value={t} style={{color:"#28434C"}}>{t}</option>)}
-          </select>
-          :<span style={{fontSize:"14px",fontWeight:800,color:B.white}}>{expense.ExpenseType}</span>}
+          <span style={{fontSize:"14px",fontWeight:800,color:B.white}}>{expense.ExpenseType}</span>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
           <span style={{fontSize:"20px",fontWeight:900,color:B.gold}}>{fmtMoney(expense.Amount)}</span>
@@ -864,28 +895,15 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
 
       {/* Body */}
       <div style={{padding:"16px"}}>
-        {canAdminEdit?<div style={{display:"flex",borderBottom:`1px solid ${B.gray100}`,padding:"6px 0",alignItems:"center"}}>
-          <span style={{fontSize:"11px",color:B.teal400,width:"130px",flexShrink:0,fontWeight:600}}>Date</span>
-          <input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} style={{fontSize:"12px",color:B.text,border:`1px solid ${B.border}`,borderRadius:"4px",padding:"4px 8px",background:B.white,fontWeight:400}}/>
-        </div>:row("Date",fmtDate(expense.ExpenseDate))}
+        {row("Date",fmtDate(expense.ExpenseDate))}
         {row("Submitted By",expense.SubmittedByName||expense.SubmittedBy)}
         {!isMileage&&row("Vendor",expense.Vendor)}
-        {canAdminEdit?<div style={{display:"flex",borderBottom:`1px solid ${B.gray100}`,padding:"6px 0",alignItems:"center"}}>
-          <span style={{fontSize:"11px",color:B.teal400,width:"130px",flexShrink:0,fontWeight:600}}>Description</span>
-          <input value={editDescription} onChange={e=>setEditDescription(e.target.value)} style={{fontSize:"12px",color:B.text,border:`1px solid ${B.border}`,borderRadius:"4px",padding:"4px 8px",background:B.white,fontWeight:400,flex:1}}/>
-        </div>:row("Description",expense.Description)}
+        {row("Description",expense.Description)}
         {expense.Tax>0&&row("Tax",fmtMoney(expense.Tax))}
         {expense.Tip>0&&row("Tip",fmtMoney(expense.Tip))}
         {expense.CardLast4&&row("Card",`\u2022\u2022\u2022\u2022 ${expense.CardLast4}`)}
-        {canAdminEdit&&expense.Property&&!lineItems.length?<div style={{display:"flex",borderBottom:`1px solid ${B.gray100}`,padding:"6px 0",alignItems:"center"}}>
-          <span style={{fontSize:"11px",color:B.teal400,width:"130px",flexShrink:0,fontWeight:600}}>Property</span>
-          <select value={editProperty} onChange={e=>{setEditProperty(e.target.value);if(e.target.value!=="Single Family")setEditSFAddress("")}} style={{fontSize:"12px",color:B.text,border:`1px solid ${B.border}`,borderRadius:"4px",padding:"4px 8px",background:B.white,fontWeight:400,flex:1}}>
-            <option value="">Select...</option>{props.map(p=><option key={p} value={p}>{p}</option>)}
-          </select>
-          {editProperty==="Single Family"&&<input value={editSFAddress} onChange={e=>setEditSFAddress(e.target.value)} placeholder="SF Address..." style={{fontSize:"12px",color:B.text,border:`1px solid ${B.border}`,borderRadius:"4px",padding:"4px 8px",background:B.white,marginLeft:"6px",width:"160px"}}/>}
-        </div>:expense.Property&&row("Property",expense.Property+(expense.SFAddress?` (${expense.SFAddress})`:""
+        {expense.Property&&row("Property",expense.Property+(expense.SFAddress?` (${expense.SFAddress})`:""
         ))}
-        {expense.SFAddress&&!canAdminEdit&&row("SF Address",expense.SFAddress)}
         {isMileage&&<>
           {row("Miles",`${expense.Miles} mi @ $${(expense.MileageRate||0.70).toFixed(2)}/mi`)}
           {mileStops.length>0&&row("Route",mileStops.join(" \u2192 "))}
@@ -896,10 +914,13 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
         {expense.ProcessedBy&&row("Processed By",expense.ProcessedBy)}
         {expense.ProcessedDate&&row("Processed",fmtDate(expense.ProcessedDate))}
         {expense.RejectionNotes&&row("Rejection Reason",expense.RejectionNotes,{color:B.no,bold:true})}
+        {expense.AlreadyInAppFolio==="Yes"&&<div style={{background:"rgba(212,150,10,0.12)",border:"1px solid rgba(212,150,10,0.4)",borderRadius:"6px",padding:"8px 12px",marginTop:"8px"}}>
+          <span style={{fontSize:"11px",fontWeight:800,color:"#D4960A"}}>⚠ Submitter indicated this was already entered in AppFolio</span>
+        </div>}
 
         {/* Line Items */}
         {lineItems.length>0&&<div style={{marginTop:"12px"}}>
-          <div style={{fontSize:"10px",fontWeight:800,color:B.goldDim,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"6px"}}>Line Items{canAdminEdit&&<span style={{fontWeight:400,textTransform:"none",color:B.teal400,marginLeft:"6px",letterSpacing:"0"}}>(editable)</span>}</div>
+          <div style={{fontSize:"10px",fontWeight:800,color:B.goldDim,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"6px"}}>Line Items</div>
           <div style={{background:B.teal50,borderRadius:"6px",overflow:"hidden",border:`1px solid ${B.teal100}`}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1.5fr 1fr auto",gap:"0",background:B.teal50}}>
               <span style={{fontSize:"9px",fontWeight:700,color:B.teal700,padding:"6px 8px",textTransform:"uppercase"}}>Category</span>
@@ -907,17 +928,10 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
               <span style={{fontSize:"9px",fontWeight:700,color:B.teal700,padding:"6px 8px",textTransform:"uppercase"}}>Property</span>
               <span style={{fontSize:"9px",fontWeight:700,color:B.teal700,padding:"6px 8px",textTransform:"uppercase",textAlign:"right"}}>Amount</span>
             </div>
-            {(canAdminEdit?editLineItems:lineItems).map((li,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1.5fr 1fr auto",gap:"0",borderTop:`1px solid ${B.teal100}`}}>
-              {canAdminEdit?<select value={li.category||""} onChange={e=>updateLI(i,"category",e.target.value)} style={{fontSize:"10px",color:B.text,border:"none",borderRight:`1px solid ${B.teal100}`,padding:"5px 8px",background:"transparent"}}>
-                <option value="">Select...</option>{cats.map(c=><option key={c} value={c}>{c}</option>)}
-              </select>:<span style={{fontSize:"11px",color:B.teal400,padding:"5px 8px"}}>{li.category||"\u2014"}</span>}
+            {lineItems.map((li,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1.5fr 1fr auto",gap:"0",borderTop:`1px solid ${B.teal100}`}}>
+              <span style={{fontSize:"11px",color:B.teal400,padding:"5px 8px"}}>{li.category||"\u2014"}</span>
               <span style={{fontSize:"11px",color:B.text,padding:"5px 8px"}}>{li.description||"\u2014"}</span>
-              {canAdminEdit?<div style={{display:"flex",flexDirection:"column",gap:"2px",padding:"3px 6px"}}>
-                <select value={li.property||""} onChange={e=>updateLI(i,"property",e.target.value)} style={{fontSize:"10px",color:B.text,border:"none",background:"transparent"}}>
-                  <option value="">Select...</option>{props.map(p=><option key={p} value={p}>{p}</option>)}
-                </select>
-                {li.property==="Single Family"&&<input value={li.sfAddress||""} onChange={e=>updateLI(i,"sfAddress",e.target.value)} placeholder="SF Address..." style={{fontSize:"9px",color:B.text,border:`1px solid ${B.border}`,borderRadius:"3px",padding:"2px 4px",background:B.white}}/>}
-              </div>:<span style={{fontSize:"11px",color:B.teal400,padding:"5px 8px"}}>{li.property||"\u2014"}{li.sfAddress?` (${li.sfAddress})`:""}</span>}
+              <span style={{fontSize:"11px",color:B.teal400,padding:"5px 8px"}}>{li.property||"\u2014"}{li.sfAddress?` (${li.sfAddress})`:""}</span>
               <span style={{fontSize:"12px",fontWeight:700,color:B.goldDim,padding:"5px 8px",textAlign:"right"}}>{fmtMoney(li.amount)}</span>
             </div>)}
           </div>
@@ -958,37 +972,12 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
                </div>;
              })}
            </div>}
-           {attachments.length===0&&!canAdminEdit&&<div style={{fontSize:"11px",color:B.teal400}}>No attachments</div>}
+           {attachments.length===0&&<div style={{fontSize:"11px",color:B.teal400}}>No attachments</div>}
            </>}
-
-          {/* Admin file upload */}
-          {canAdminEdit&&<>
-            <input type="file" ref={adminFileRef} multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" style={{display:"none"}} onChange={e=>{const newFiles=Array.from(e.target.files||[]);if(newFiles.length)setAdminFiles(prev=>[...prev,...newFiles]);e.target.value=""}}/>
-            <div style={{border:`2px dashed ${adminFiles.length>0?B.gold:B.border}`,borderRadius:"6px",padding:"12px",textAlign:"center",cursor:"pointer",transition:"all 0.2s",background:adminFiles.length>0?B.gold50:B.teal50}}
-              onClick={e=>{e.stopPropagation();adminFileRef.current?.click()}}
-              onDragOver={e=>{e.preventDefault();e.stopPropagation();e.currentTarget.style.borderColor=B.gold;e.currentTarget.style.background=B.gold50}}
-              onDragLeave={e=>{e.stopPropagation();e.currentTarget.style.borderColor=adminFiles.length>0?B.gold:B.border;e.currentTarget.style.background=adminFiles.length>0?B.gold50:B.teal50}}
-              onDrop={e=>{e.preventDefault();e.stopPropagation();e.currentTarget.style.borderColor=adminFiles.length>0?B.gold:B.border;const newFiles=Array.from(e.dataTransfer.files||[]);if(newFiles.length)setAdminFiles(prev=>[...prev,...newFiles])}}>
-              <div style={{fontSize:"11px",color:B.teal500,fontWeight:600}}>+ Add Receipts / Documents</div>
-              <div style={{fontSize:"9px",color:B.teal400,marginTop:"2px"}}>Click or drag files here</div>
-            </div>
-            {adminFiles.length>0&&<div style={{marginTop:"6px",display:"flex",flexWrap:"wrap",gap:"4px"}}>
-              {adminFiles.map((f,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:"4px",background:B.gold50,border:`1px solid ${B.gold}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.goldDim}}>
-                <span>📎 {f.name.length>25?f.name.slice(0,23)+"...":f.name}</span>
-                <span style={{fontSize:"9px",color:B.teal400,marginLeft:"2px"}}>({(f.size/1024).toFixed(0)}KB)</span>
-                <button onClick={e=>{e.stopPropagation();setAdminFiles(prev=>prev.filter((_,j)=>j!==i))}} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"12px",fontWeight:700,padding:"0 0 0 4px"}}>{"\u00d7"}</button>
-              </div>)}
-            </div>}
-          </>}
         </div>
 
         {/* Actions */}
         <div style={{marginTop:"16px",display:"flex",gap:"8px",justifyContent:"flex-end",flexWrap:"wrap",borderTop:`1px solid ${B.teal600}`,paddingTop:"12px"}}>
-          {userRole==="admin"&&expense.Status==="Submitted"&&onAction&&<>
-            <Btn style={{background:"#4A78B0",color:"#fff"}} onClick={()=>onAction(expense.id,"save_edits",null,{editProperty,editLineItems,editDate,editDescription,editExpenseType,adminFiles})} disabled={actionLoading||uploading}>{uploading?"Uploading...":"Save Edits"}</Btn>
-            <Btn style={{background:B.ok}} onClick={()=>onAction(expense.id,"approve",null,{editProperty,editLineItems,editDate,editDescription,editExpenseType,adminFiles})} disabled={actionLoading||uploading}>{uploading?"Uploading...":`\u2713 Approve`}</Btn>
-            <Btn style={{background:B.no}} onClick={()=>{const n=prompt("Rejection reason (optional):");if(n!==null)onAction(expense.id,"reject",n)}} disabled={actionLoading}>{"\u2717"} Reject</Btn>
-          </>}
           {(userRole==="admin"||userRole==="accounting")&&expense.Status==="Approved"&&onAction&&
             <Btn style={{background:"#6A8EC8"}} onClick={()=>onAction(expense.id,"process")} disabled={actionLoading}>{"Posted in AppFolio"}</Btn>
           }
@@ -1030,6 +1019,7 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,o
             <span style={{fontSize:"12px",fontWeight:700,color:B.text}}>{exp.SubmittedByName||exp.SubmittedBy}</span>
             <span style={{fontSize:"11px",color:B.teal300}}>{exp.ExpenseType}</span>
             {exp.Vendor&&<span style={{fontSize:"10px",color:B.teal400}}>{"\u2022"} {exp.Vendor}</span>}
+            {exp.AlreadyInAppFolio==="Yes"&&<span style={{fontSize:"9px",fontWeight:700,color:"#D4960A",background:"rgba(212,150,10,0.12)",border:"1px solid rgba(212,150,10,0.3)",borderRadius:"9999px",padding:"1px 6px"}}>In AppFolio</span>}
           </div>
           <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
             <span style={{fontSize:"13px",fontWeight:800,color:B.goldDim}}>{fmtMoney(exp.Amount)}</span>
@@ -1541,6 +1531,7 @@ function ExpenseManager(){
   const[actionLoading,setActionLoading]=useState(false);
   const[viewExpense,setViewExpense]=useState(null);
   const[editExpense,setEditExpense]=useState(null);
+  const[reviewExpense,setReviewExpense]=useState(null);
   const[adminSaving,setAdminSaving]=useState(false);
 
   // Determine role
@@ -1803,9 +1794,9 @@ function ExpenseManager(){
             setToast({message:"Expense updated & resubmitted!",type:"success"});
           }}/>}
 
-        {tab==="queue"&&isAdmin&&<>
+        {tab==="queue"&&isAdmin&&!reviewExpense&&<>
           <ExpenseList expenses={expenses} title="Pending Approval" filter={e=>e.Status==="Submitted"}
-            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
+            userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={exp=>setReviewExpense(exp)} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
           <ExpenseList expenses={expenses} title="Approved — Awaiting Posting in AppFolio" filter={e=>e.Status==="Approved"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}
             headerActions={<>
@@ -1820,6 +1811,41 @@ function ExpenseManager(){
           <ExpenseList expenses={expenses} title="Recently Completed" filter={e=>["Processed","Paid"].includes(e.Status)}
             userRole={userRole} userEmail={userEmail} onView={setViewExpense} onDelete={handleDelete} isSuperAdmin={isSuperAdmin}/>
         </>}
+
+        {tab==="queue"&&isAdmin&&reviewExpense&&<ExpenseForm
+          settings={settings} users={users} userEmail={userEmail} employees={employees} isAdmin={isAdmin}
+          editExpense={reviewExpense} adminReview={true}
+          onCancel={()=>setReviewExpense(null)}
+          onApprove={async(itemId,fields)=>{
+            fields.Status="Approved";fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
+            await updateExpense(itemId,fields);
+            const expense=expenses.find(e=>e.id===itemId);
+            sendNotificationEmail({...expense,...fields},"approved",{
+              routing:routing||DEFAULT_ROUTING,settings,users,
+              approverName:getUserName()||userEmail,expenseId:itemId.toString()
+            }).catch(e=>console.warn("Email error:",e));
+            setReviewExpense(null);await refresh();
+            setToast({message:"Expense approved!",type:"success"});
+          }}
+          onReject={async(itemId,fields,notes)=>{
+            fields.Status="Rejected";fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
+            if(notes)fields.RejectionNotes=notes;
+            await updateExpense(itemId,fields);
+            const expense=expenses.find(e=>e.id===itemId);
+            sendNotificationEmail({...expense,...fields},"rejected",{
+              routing:routing||DEFAULT_ROUTING,settings,users,
+              approverName:getUserName()||userEmail,rejectionNotes:notes,expenseId:itemId.toString()
+            }).catch(e=>console.warn("Email error:",e));
+            setReviewExpense(null);await refresh();
+            setToast({message:"Expense rejected",type:"success"});
+          }}
+          onSaveEdits={async(itemId,fields)=>{
+            await updateExpense(itemId,fields);
+            // Upload handled inside form
+            await refresh();
+            setToast({message:"Edits saved!",type:"success"});
+          }}
+        />}
 
         {tab==="queue"&&isAccounting&&<>
           <ExpenseList expenses={expenses} title="Ready to Process" filter={e=>e.Status==="Approved"}
