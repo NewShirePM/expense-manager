@@ -640,7 +640,7 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
       {adminReview&&editExpense&&<div style={{fontSize:"11px",color:B.teal400,marginTop:"4px",marginBottom:"4px"}}>Submitted by <b style={{color:B.text}}>{editExpense.SubmittedByName||editExpense.SubmittedBy}</b> on {editExpense.SubmittedDate?new Date(editExpense.SubmittedDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"} — All fields are editable. Changes are saved on Approve or Save Edits.</div>}
       {adminReview&&editExpense?.AlreadyInAppFolio==="Yes"&&<div style={{background:"rgba(212,150,10,0.12)",border:"1px solid rgba(212,150,10,0.4)",borderRadius:"6px",padding:"10px 12px",marginTop:"6px",marginBottom:"4px"}}>
         <div style={{fontSize:"12px",fontWeight:800,color:"#D4960A"}}>⚠ ALREADY IN APPFOLIO</div>
-        <div style={{fontSize:"11px",color:B.text,marginTop:"2px"}}>Submitter indicated this expense was already entered in AppFolio. Please confirm it exists before approving.</div>
+        <div style={{fontSize:"11px",color:B.text,marginTop:"2px"}}>Submitter indicated this expense was already entered in AppFolio under a Work Order. Please confirm it exists before approving.</div>
       </div>}
       {onCancel&&<Btn v="ghost" onClick={onCancel}>← Back</Btn>}
     </div>
@@ -915,7 +915,7 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
         {expense.ProcessedDate&&row("Processed",fmtDate(expense.ProcessedDate))}
         {expense.RejectionNotes&&row("Rejection Reason",expense.RejectionNotes,{color:B.no,bold:true})}
         {expense.AlreadyInAppFolio==="Yes"&&<div style={{background:"rgba(212,150,10,0.12)",border:"1px solid rgba(212,150,10,0.4)",borderRadius:"6px",padding:"8px 12px",marginTop:"8px"}}>
-          <span style={{fontSize:"11px",fontWeight:800,color:"#D4960A"}}>⚠ Submitter indicated this was already entered in AppFolio</span>
+          <span style={{fontSize:"11px",fontWeight:800,color:"#D4960A"}}>⚠ Submitter indicated this was already entered in AppFolio under a Work Order</span>
         </div>}
 
         {/* Line Items */}
@@ -1843,7 +1843,7 @@ function ExpenseManager(){
               approverName:getUserName()||userEmail,expenseId:itemId.toString()
             }).catch(e=>console.warn("Email error:",e));
             setReviewExpense(null);await refresh();
-            setToast({message:flaggedAppFolio?`Expense approved & moved to ${isCC?"Processed":"Pending Payment"} (already in AppFolio)`:"Expense approved!",type:"success"});
+            setToast({message:flaggedAppFolio?`Expense approved & moved to ${isCC?"Processed":"Pending Payment"} (already in AppFolio under a Work Order)`:"Expense approved!",type:"success"});
           }}
           onReject={async(itemId,fields,notes)=>{
             fields.Status="Rejected";fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
