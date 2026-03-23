@@ -294,21 +294,7 @@ async function uploadAttachment(expenseId,file){
     body:file
   });
   if(!r.ok)throw new Error(`Upload failed: ${r.status}`);
-  const uploaded=await r.json();
-  // Create org-wide sharing link
-  const shareUrl=await createSharingLink(uploaded.id);
-  return{...uploaded,shareUrl};
-}
-
-// Save sharing links to expense record after all uploads
-async function saveAttachmentLinks(expenseId,links){
-  if(!links.length)return;
-  try{
-    await updateExpense(expenseId,{AttachmentLinksJSON:JSON.stringify(links)});
-  }catch(e){
-    // Field may not exist — silently fail, links are still available via direct access
-    console.warn("Could not save attachment links (field may not exist):",e.message);
-  }
+  return r.json();
 }
 
 async function getAttachments(expenseId){
