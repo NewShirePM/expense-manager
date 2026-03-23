@@ -470,6 +470,9 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
   // Attachments
   const[files,setFiles]=useState([]);
   const[existingAttachments,setExistingAttachments]=useState([]);
+  const[attPreviews,setAttPreviews]=useState({});
+  const[attLoading,setAttLoading]=useState(false);
+  const[expandedImg,setExpandedImg]=useState(null);
   const fileRef=useRef(null);
   const cameraRef=useRef(null);
   // State
@@ -481,11 +484,24 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
   // AppFolio flag
   const[alreadyInAppFolio,setAlreadyInAppFolio]=useState(editExpense?.Description?.includes("[APPFOLIO-WO]")||false);
 
-  // Load existing attachments for edit mode
+  // Load existing attachments for edit mode — with full blob previews
   useEffect(()=>{
     if(isEdit&&editExpense.id){
       (async()=>{
-        try{const atts=await getAttachments(editExpense.id);setExistingAttachments(atts)}catch(e){}
+        setAttLoading(true);
+        try{
+          const atts=await getAttachments(editExpense.id);
+          setExistingAttachments(atts);
+          const pvs={};
+          for(const f of atts){
+            try{
+              const{base64,contentType}=await getAttachmentBase64(f.id);
+              pvs[f.id]={dataUrl:`data:${contentType};base64,${base64}`,contentType,isImage:/^image\//i.test(contentType)};
+            }catch(e){console.warn("Failed to load attachment:",f.name,e)}
+          }
+          setAttPreviews(pvs);
+        }catch(e){}
+        finally{setAttLoading(false)}
       })();
     }
   },[isEdit,editExpense?.id]);
@@ -826,15 +842,50 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
         </div>}
       </div>}
 
-      {/* Existing attachments (edit mode) */}
-      {isEdit&&existingAttachments.length>0&&!isMileage&&<div style={{marginTop:"8px"}}>
-        <label style={lCss}>Current Attachments</label>
-        <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>
-          {existingAttachments.map(a=><span key={a.id} style={{background:B.teal50,border:`1px solid ${B.teal100}`,borderRadius:"4px",padding:"3px 8px",fontSize:"10px",color:B.teal700}}>
-            {"\uD83D\uDCCE"} {a.name}
-          </span>)}
-        </div>
+      {/* Existing attachments (edit mode) — full preview with click to view */}
+      {isEdit&&!isMileage&&<div style={{marginTop:"8px"}}>
+        <label style={lCss}>Current Attachments{attLoading?" (loading...)":existingAttachments.length>0?` (${existingAttachments.length})`:""}</label>
+        {attLoading?<div style={{fontSize:"11px",color:B.teal400,padding:"8px"}}>Loading attachments...</div>:
+         existingAttachments.length===0?<div style={{fontSize:"11px",color:B.teal400}}>No attachments on file</div>:
+         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:"8px"}}>
+           {existingAttachments.map(f=>{
+             const pv=attPreviews[f.id];
+             const isImage=pv?.isImage;
+             const isPdf=(f.name||"").toLowerCase().endsWith(".pdf");
+             const fileIcon=isPdf?"📄":"📎";
+             const openFile=()=>{
+               if(!pv)return;
+               if(isImage){setExpandedImg(pv.dataUrl);return}
+               try{
+                 const byteStr=atob(pv.dataUrl.split(",")[1]);
+                 const ab=new ArrayBuffer(byteStr.length);
+                 const ia=new Uint8Array(ab);
+                 for(let i=0;i<byteStr.length;i++)ia[i]=byteStr.charCodeAt(i);
+                 const blob=new Blob([ab],{type:pv.contentType});
+                 window.open(URL.createObjectURL(blob),"_blank");
+               }catch(e){console.error("Failed to open:",e)}
+             };
+             return <div key={f.id} onClick={openFile} style={{background:B.pageBg||B.teal50,border:`1px solid ${B.border||B.teal100}`,borderRadius:"6px",overflow:"hidden",cursor:pv?"pointer":"default"}}>
+               {isImage?<img src={pv.dataUrl} alt={f.name} style={{width:"100%",height:"140px",objectFit:"cover",display:"block"}} title="Click to enlarge"/>
+                :<div style={{height:"140px",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:B.teal50,gap:"4px"}}>
+                  <span style={{fontSize:"28px"}}>{fileIcon}</span>
+                  <span style={{fontSize:"10px",color:B.teal500,fontWeight:600}}>{isPdf?"PDF Document":"View File"}</span>
+                  <span style={{fontSize:"9px",color:B.teal400}}>Click to open</span>
+                </div>}
+               <div style={{padding:"3px 6px",fontSize:"9px",color:B.teal400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+             </div>;
+           })}
+         </div>}
         <div style={{fontSize:"9px",color:B.teal400,marginTop:"4px"}}>Existing attachments are preserved. New uploads will be added alongside them.</div>
+      </div>}
+
+      {/* Image lightbox */}
+      {expandedImg&&<div onClick={()=>setExpandedImg(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:9999,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",padding:"20px"}}>
+        <div style={{position:"absolute",top:"16px",right:"20px",display:"flex",gap:"10px",zIndex:10000}}>
+          <button onClick={()=>setExpandedImg(null)} style={{background:"rgba(255,255,255,0.15)",color:"#fff",border:"none",padding:"6px 12px",borderRadius:"4px",fontSize:"14px",fontWeight:700,cursor:"pointer"}}>{"\u00d7"}</button>
+        </div>
+        <img src={expandedImg} style={{maxWidth:"95vw",maxHeight:"92vh",objectFit:"contain",borderRadius:"4px",boxShadow:"0 4px 40px rgba(0,0,0,0.6)"}} alt="Attachment" onClick={e=>e.stopPropagation()}/>
+        <div style={{color:"rgba(255,255,255,0.4)",fontSize:"10px",marginTop:"8px"}}>Click anywhere to close</div>
       </div>}
 
       {/* Submit / Admin Review Actions */}
