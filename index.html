@@ -39,7 +39,7 @@ const CONFIG={
   configListName:"Expense Config",
   employeesListName:"Employees",
   googleMapsKey:"AIzaSyCgm0GDTAcsYUJtTVrZLR3xS8sazfqXxSY",
-  version:"3.3.2",
+  version:"3.3.3",
 };
 const GRAPH="https://graph.microsoft.com/v1.0";
 
@@ -797,8 +797,8 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
         <label style={lCss}>Route Stops</label>
         {stops.map((stop,idx)=>(
           <div key={idx} style={{display:"flex",gap:"6px",alignItems:"center",marginBottom:"4px"}}>
-            <span style={{fontSize:"10px",color:B.teal400,fontWeight:700,width:"14px"}}>{idx===0?"A":idx===stops.length-1?"B":String.fromCharCode(65+idx)}</span>
-            <Inp value={stop} onChange={e=>updateStop(idx,e.target.value)} placeholder={idx===0?"Start address...":"Destination..."} style={{flex:1}}/>
+            <span style={{fontSize:"9px",color:B.white,fontWeight:700,background:idx===0?C.success:idx===stops.length-1?C.error:C.teal500,borderRadius:"4px",padding:"2px 5px",whiteSpace:"nowrap",flexShrink:0}}>{idx===0?"Start":idx===stops.length-1?"End":`Stop ${idx}`}</span>
+            <Inp value={stop} onChange={e=>updateStop(idx,e.target.value)} placeholder={idx===0?"Start address...":idx===stops.length-1?"End address...":"Stop address..."} style={{flex:1}}/>
             {stops.length>2&&idx>0&&idx<stops.length-1&&<button onClick={()=>removeStop(idx)} style={{background:"none",border:"none",color:B.no,cursor:"pointer",fontSize:"14px"}}>×</button>}
           </div>
         ))}
