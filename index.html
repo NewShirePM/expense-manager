@@ -39,7 +39,7 @@ const CONFIG={
   configListName:"Expense Config",
   employeesListName:"Employees",
   googleMapsKey:"AIzaSyCgm0GDTAcsYUJtTVrZLR3xS8sazfqXxSY",
-  version:"3.2.0",
+  version:"3.3.1",
 };
 const GRAPH="https://graph.microsoft.com/v1.0";
 
@@ -52,7 +52,7 @@ const STATUS={DRAFT:"Draft",SUBMITTED:"Submitted",APPROVED:"Approved",REJECTED:"
 const STATUS_COLORS={Draft:"#7A8585",Submitted:"#D4960A",Approved:"#2D8A5A",Rejected:"#C44B3B","Pending Payment":"#4A78B0",Processed:"#4A78B0",Paid:"#2D8A5A"};
 
 const DEFAULT_CATEGORIES=["Office Supplies","Travel","Meals/Entertainment","Software/Subscriptions","Maintenance/Repairs","Marketing","Professional Development","Vehicle/Fuel","Other"];
-const DEFAULT_EXPENSE_TYPES=["Personal Reimbursement","Mileage","Credit Card Reconciliation"];
+const DEFAULT_EXPENSE_TYPES=["Personal Reimbursement","Mileage","Credit Card Reconciliation","Lowes Account"];
 const DEFAULT_PROPERTIES=["Fusion Pointe","Townes at Converse","Liberty Square","City View","Villas at Oakwood","701 East Main","Arlington Townes","Hampton Avenue","The Orchard","Single Family"];
 
 const DEFAULT_USERS=[
@@ -75,6 +75,7 @@ const DEFAULT_ROUTING={
   "Personal Reimbursement":{approvers:["bturner@newshirepm.com","cmunson@newshirepm.com","jwhite@vanrockre.com"],accounting:[]},
   "Mileage":{approvers:["bturner@newshirepm.com","cmunson@newshirepm.com","jwhite@vanrockre.com"],accounting:[]},
   "Credit Card Reconciliation":{approvers:["bturner@newshirepm.com","cmunson@newshirepm.com","jwhite@vanrockre.com"],accounting:[]},
+  "Lowes Account":{approvers:["bturner@newshirepm.com","cmunson@newshirepm.com","jwhite@vanrockre.com"],accounting:[]},
 };
 
 // ============================================================
@@ -103,6 +104,9 @@ const B={
 };
 const fb="'Source Sans 3','Segoe UI',-apple-system,sans-serif";
 function sortCats(arr){const other=[];const rest=[];(arr||[]).forEach(c=>/^other$/i.test(c)?other.push(c):rest.push(c));return[...rest.sort((a,b)=>a.localeCompare(b)),...other]}
+// CC-like types: same workflow as Credit Card Reconciliation
+const CC_LIKE_TYPES=["Credit Card Reconciliation","Lowes Account"];
+function isCCLike(type){return CC_LIKE_TYPES.includes(type)}
 const fm="'Source Code Pro',Consolas,monospace";
 
 // ============================================================
@@ -115,7 +119,7 @@ function fmtMoney(v){if(v==null||isNaN(v))return"$0.00";return"$"+Number(v).toLo
 // ============================================================
 // MSAL AUTH
 // ============================================================
-const msalConfig={auth:{clientId:CONFIG.clientId,authority:`https://login.microsoftonline.com/${CONFIG.tenantId}`,redirectUri:window.location.origin+window.location.pathname},cache:{cacheLocation:"sessionStorage"}};
+const msalConfig={auth:{clientId:CONFIG.clientId,authority:`https://login.microsoftonline.com/${CONFIG.tenantId}`,redirectUri:window.location.origin+window.location.pathname},cache:{cacheLocation:"localStorage",storeAuthStateInCookie:true}};
 let msalInstance=null;
 try{msalInstance=new msal.PublicClientApplication(msalConfig)}catch(e){console.error("MSAL init failed:",e)}
 
@@ -328,7 +332,7 @@ function buildExpenseEmailHtml(expense,action,opts={}){
   const mileStops=expense.MileageStopsJSON?JSON.parse(expense.MileageStopsJSON):[];
   const mileProps=expense.MileagePropertiesJSON?JSON.parse(expense.MileagePropertiesJSON):[];
   const isM=expense.ExpenseType==="Mileage";
-  const isCC=expense.ExpenseType==="Credit Card Reconciliation";
+  const isCC=isCCLike(expense.ExpenseType);
   const hdr={
     submitted:{t:"New Expense Submitted",c:"#CDA04B",i:`A new ${expense.ExpenseType} expense has been submitted and requires your review.`},
     approved:{t:"Expense Approved \u2014 Ready for Processing",c:"#3DA06B",i:`An expense has been approved by ${approverName||"an admin"} and is ready for processing.`},
@@ -507,7 +511,7 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
   },[isEdit,editExpense?.id]);
 
   const isMileage=expType==="Mileage";
-  const isCC=expType==="Credit Card Reconciliation";
+  const isCC=isCCLike(expType);
   const isReimb=expType==="Personal Reimbursement";
   const hasLineItems=isReimb||isCC;
 
@@ -697,18 +701,39 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
       {onBehalfOf&&<div style={{fontSize:"10px",color:B.goldDim,marginTop:"3px",fontWeight:600}}>Submitting as: {empList.find(e=>e.email===onBehalfOf)?.name||onBehalfOf}</div>}
     </F>}
 
-    {/* Expense Type */}
-    <F label="Expense Type" required>
-      {isEdit&&!adminReview?<Inp value={expType} disabled style={{opacity:0.7,cursor:"not-allowed"}}/>
-        :<Sel value={expType} onChange={e=>handleTypeChange(e.target.value)} options={s.expenseTypes||DEFAULT_EXPENSE_TYPES} placeholder="Select type..."/>}
-    </F>
+    {/* Expense Type — visual card selector */}
+    <div style={{marginBottom:"12px"}}>
+      <label style={lCss}>Expense Type <span style={{color:B.no}}> *</span></label>
+      {isEdit&&!adminReview
+        ?<Inp value={expType} disabled style={{opacity:0.7,cursor:"not-allowed"}}/>
+        :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:"6px"}}>
+          {(s.expenseTypes||DEFAULT_EXPENSE_TYPES).map(t=>{
+            const icons={"Personal Reimbursement":"💵","Mileage":"🚗","Credit Card Reconciliation":"💳","Lowes Account":"🏗"};
+            const active=expType===t;
+            return <button key={t} type="button" onClick={()=>handleTypeChange(t)} style={{
+              padding:"10px 8px",borderRadius:"6px",border:`2px solid ${active?C.gold500:C.gray200}`,
+              background:active?C.gold50:C.white,cursor:"pointer",textAlign:"center",
+              transition:"all 0.15s",fontFamily:fb,
+            }}>
+              <div style={{fontSize:"18px",marginBottom:"3px"}}>{icons[t]||"📄"}</div>
+              <div style={{fontSize:"10px",fontWeight:active?800:600,color:active?C.gold700:C.teal700,lineHeight:1.2}}>{t}</div>
+            </button>;
+          })}
+        </div>
+      }
+    </div>
+
+    {!expType&&!isEdit&&!adminReview&&<div style={{textAlign:"center",padding:"24px 16px",background:C.teal50,border:`1px dashed ${C.teal100}`,borderRadius:"6px",color:C.teal400,fontSize:"12px",marginBottom:"8px"}}>
+      <div style={{fontSize:"22px",marginBottom:"8px",opacity:0.5}}>☝️</div>
+      <div style={{fontWeight:700,color:C.teal600}}>Select an expense type above to get started</div>
+    </div>}
 
     {expType&&<>
       {/* Common fields */}
       <div style={{display:"grid",gridTemplateColumns:isCC?"1fr 1fr 1fr":isMileage?"1fr":"1fr 1fr",gap:"8px"}}>
         <F label="Date" required><Inp type="date" value={date} onChange={e=>setDate(e.target.value)}/></F>
         {!isMileage&&<F label="Vendor / Payee"><Inp value={vendor} onChange={e=>setVendor(e.target.value)} placeholder="e.g. Home Depot, Shell"/></F>}
-        {isCC&&<F label="Card Last 4" required><Inp value={ccLast4} onChange={e=>setCcLast4(e.target.value.replace(/\D/g,"").slice(0,4))} placeholder="1234" maxLength={4}/></F>}
+        {isCC&&<F label={expType==="Lowes Account"?"Account # (Last 4)":"Card Last 4"} required><Inp value={ccLast4} onChange={e=>setCcLast4(e.target.value.replace(/\D/g,"").slice(0,4))} placeholder="1234" maxLength={4}/></F>}
       </div>
       {isCC&&<F label="Charge Date"><Inp type="date" value={ccDate} onChange={e=>setCcDate(e.target.value)}/></F>}
 
@@ -889,14 +914,16 @@ function ExpenseForm({settings,users,userEmail,onSubmit,onCancel,editExpense,emp
       </div>}
 
       {/* Submit / Admin Review Actions */}
-      <div style={{display:"flex",justifyContent:"flex-end",gap:"8px",marginTop:"16px",borderTop:`1px solid ${B.teal600}`,paddingTop:"12px",flexWrap:"wrap"}}>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:"8px",marginTop:"20px",borderTop:`1px solid ${B.border}`,paddingTop:"16px",flexWrap:"wrap",alignItems:"center"}}>
         {onCancel&&<Btn v="secondary" onClick={onCancel}>Cancel</Btn>}
         {adminReview?<>
-          <Btn style={{background:"#4A78B0",color:"#fff"}} onClick={()=>handleAdminAction("save")} disabled={submitting}>{submitting?"Saving...":"Save Edits"}</Btn>
-          <Btn style={{background:B.ok,color:"#fff"}} onClick={()=>handleAdminAction("approve")} disabled={submitting}>{submitting?"...":"\u2713 Approve"}</Btn>
-          <Btn style={{background:B.no,color:"#fff"}} onClick={()=>handleAdminAction("reject")} disabled={submitting}>{submitting?"...":"\u2717 Reject"}</Btn>
+          <Btn style={{background:"#4A78B0",color:"#fff",padding:"8px 18px"}} onClick={()=>handleAdminAction("save")} disabled={submitting}>{submitting?"Saving...":"💾 Save Edits"}</Btn>
+          <Btn style={{background:B.ok,color:"#fff",padding:"8px 18px"}} onClick={()=>handleAdminAction("approve")} disabled={submitting}>{submitting?"...":"✓ Approve"}</Btn>
+          <Btn style={{background:B.no,color:"#fff",padding:"8px 18px"}} onClick={()=>handleAdminAction("reject")} disabled={submitting}>{submitting?"...":"✗ Reject"}</Btn>
         </>:
-          <Btn onClick={handleSubmit} disabled={submitting}>{submitting?(isEdit?"Saving...":"Submitting..."):(isEdit?"Save & Resubmit":"Submit Expense")}</Btn>
+          <Btn onClick={handleSubmit} disabled={submitting} style={{padding:"10px 28px",fontSize:"13px",letterSpacing:"0.02em"}}>
+            {submitting?(isEdit?"Saving...":"Submitting..."):(isEdit?"Save & Resubmit":"Submit Expense →")}
+          </Btn>
         }
       </div>
     </>}
@@ -912,7 +939,7 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
   const[previews,setPreviews]=useState({});
   const[expandedImg,setExpandedImg]=useState(null);
 
-  const isCC=expense.ExpenseType==="Credit Card Reconciliation";
+  const isCC=isCCLike(expense.ExpenseType);
   const isMileage=expense.ExpenseType==="Mileage";
   const isOwner=expense.SubmittedBy?.toLowerCase()===userEmail?.toLowerCase();
   const canDelete=isSuperAdmin||(isOwner&&expense.Status==="Submitted");
@@ -1075,8 +1102,13 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
 // ============================================================
 function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,onDelete,actionLoading,isSuperAdmin,headerActions}){
   const filtered=filter?expenses.filter(filter):expenses;
-  if(filtered.length===0)return <Card style={{marginBottom:"8px"}}><div style={{fontSize:"11px",color:B.teal400,textAlign:"center",padding:"8px"}}>{title}: None{headerActions&&<div style={{marginTop:"6px"}}>{headerActions}</div>}</div></Card>;
-  const isCC=(exp)=>exp.ExpenseType==="Credit Card Reconciliation";
+  if(filtered.length===0)return <Card style={{marginBottom:"8px"}}><div style={{textAlign:"center",color:B.teal400,padding:"16px 8px",fontSize:"12px"}}>
+    <div style={{fontSize:"20px",marginBottom:"6px",opacity:0.4}}>📋</div>
+    <div style={{fontWeight:600}}>{title}</div>
+    <div style={{fontSize:"11px",marginTop:"2px",opacity:0.7}}>Nothing here</div>
+    {headerActions&&<div style={{marginTop:"10px"}}>{headerActions}</div>}
+  </div></Card>;
+  const isCC=(exp)=>isCCLike(exp.ExpenseType);
   return <Card style={{marginBottom:"8px"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px",borderBottom:`2px solid ${B.gold}`,paddingBottom:"6px",flexWrap:"wrap",gap:"6px"}}>
       <h4 style={{fontSize:"11px",fontWeight:800,color:B.teal700,textTransform:"uppercase",letterSpacing:"0.8px",margin:0}}>{title} ({filtered.length})</h4>
@@ -1085,10 +1117,11 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,o
     {filtered.map(exp=>{
       const isOwner=exp.SubmittedBy?.toLowerCase()===userEmail?.toLowerCase();
       const canDelete=isSuperAdmin||(isOwner&&exp.Status==="Submitted");
+      const typeAccent={"Personal Reimbursement":C.gold500,"Mileage":C.success,"Credit Card Reconciliation":C.info,"Lowes Account":"#5B8A4A"}[exp.ExpenseType]||C.gray300;
       return(
-      <div key={exp.id} onClick={()=>onView&&onView(exp)} style={{background:B.white,border:`1px solid ${B.border}`,borderRadius:"6px",padding:"8px 10px",marginBottom:"4px",cursor:"pointer",transition:"background 0.15s"}}
-        onMouseEnter={e=>e.currentTarget.style.background=B.teal50}
-        onMouseLeave={e=>e.currentTarget.style.background=B.white}>
+      <div key={exp.id} onClick={()=>onView&&onView(exp)} style={{background:B.white,border:`1px solid ${B.border}`,borderRadius:"6px",padding:"8px 10px",marginBottom:"4px",cursor:"pointer",transition:"background 0.15s,box-shadow 0.15s",borderLeft:`3px solid ${typeAccent}`}}
+        onMouseEnter={e=>{e.currentTarget.style.background=B.teal50;e.currentTarget.style.boxShadow="0 2px 8px rgba(28,55,64,0.08)"}}
+        onMouseLeave={e=>{e.currentTarget.style.background=B.white;e.currentTarget.style.boxShadow="none"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{display:"flex",alignItems:"center",gap:"8px",flex:1}}>
             <StatusBadge status={exp.Status}/>
@@ -1145,10 +1178,10 @@ async function buildSharingLinksMap(expenseList){
   return attMap;
 }
 
-// CC Pending AppFolio Posting Report: All CC expenses from Approved through Processed with attachment links
+// CC / Lowes Account Pending AppFolio Posting Report
 async function generateCCReport(expenses){
-  const inFlow=expenses.filter(e=>e.ExpenseType==="Credit Card Reconciliation"&&["Approved","Processed"].includes(e.Status));
-  if(!inFlow.length){alert("No approved or processed CC transactions found.");return}
+  const inFlow=expenses.filter(e=>isCCLike(e.ExpenseType)&&["Approved","Processed"].includes(e.Status));
+  if(!inFlow.length){alert("No approved or processed CC / Lowes Account transactions found.");return}
   // Generate sharing links for accounting (no login required)
   const attMap=await buildSharingLinksMap(inFlow);
   const rows=[];
@@ -1191,8 +1224,8 @@ async function generateCCReport(expenses){
   for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:6})];if(cell&&typeof cell.v==="number")cell.z="$#,##0.00"}
   // Make receipt URLs clickable hyperlinks
   for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:8})];if(cell&&cell.v){const urls=String(cell.v).split("\n").filter(Boolean);if(urls.length===1){cell.l={Target:urls[0],Tooltip:urls[0]}}}}
-  XLSX.utils.book_append_sheet(wb,ws,"CC Pending AppFolio Posting");
-  const d=new Date();XLSX.writeFile(wb,`CC_Pending_AppFolio_Posting_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`);
+  XLSX.utils.book_append_sheet(wb,ws,"CC & Lowes Pending AppFolio Posting");
+  const d=new Date();XLSX.writeFile(wb,`CC_Lowes_Pending_AppFolio_Posting_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`);
 }
 
 // Reimbursement Payroll Report: Pending Payment only (Mileage + Reimbursement), grouped by person with subtotals
@@ -1309,7 +1342,7 @@ function Dashboard({expenses}){
   const byCat={};expenses.forEach(e=>{const c=e.ExpenseType==="Mileage"?"Mileage":(e.Category||"Other");byCat[c]=(byCat[c]||0)+(e.Amount||0)});
   const catEntries=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
 
-  const typeColors={"Personal Reimbursement":"#CDA04B","Mileage":"#3DA06B","Credit Card Reconciliation":"#6A8EC8"};
+  const typeColors={"Personal Reimbursement":"#CDA04B","Mileage":"#3DA06B","Credit Card Reconciliation":"#6A8EC8","Lowes Account":"#5B8A4A"};
   const catColors=["#CDA04B","#3DA06B","#6A8EC8","#D35B4B","#9E7B2F","#6FA0B0","#A3C5D0","#4A7E91","#E8CC7A","#D0E1E8"];
 
   const kpiDefs=[
@@ -1354,9 +1387,11 @@ function Dashboard({expenses}){
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:"8px",marginBottom:"16px"}}>
       {kpiDefs.map(k=>(
         <div key={k.id} onClick={()=>setActiveKpi(activeKpi===k.id?null:k.id)}
-          style={{background:activeKpi===k.id?B.gold50:B.white,border:`1px solid ${activeKpi===k.id?B.gold:B.border}`,borderRadius:"6px",padding:"10px",textAlign:"center",cursor:"pointer",transition:"all 0.15s",boxShadow:"0 1px 3px rgba(28,55,64,0.06)"}}>
-          <div style={{fontSize:"18px",fontWeight:900,color:k.color||B.gold}}>{k.value}</div>
-          <div style={{fontSize:"9px",fontWeight:700,color:B.teal400,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:"2px"}}>{k.label}</div>
+          style={{background:activeKpi===k.id?B.gold50:B.white,border:`1px solid ${activeKpi===k.id?B.gold:B.border}`,borderRadius:"8px",padding:"12px 10px",textAlign:"center",cursor:"pointer",transition:"all 0.15s",boxShadow:activeKpi===k.id?"0 2px 8px rgba(205,160,75,0.15)":"0 1px 3px rgba(28,55,64,0.06)",borderTop:`3px solid ${k.color||B.gold}`}}
+          onMouseEnter={e=>{ if(activeKpi!==k.id){e.currentTarget.style.boxShadow="0 2px 8px rgba(28,55,64,0.1)";e.currentTarget.style.transform="translateY(-1px)"}}}
+          onMouseLeave={e=>{ if(activeKpi!==k.id){e.currentTarget.style.boxShadow="0 1px 3px rgba(28,55,64,0.06)";e.currentTarget.style.transform="translateY(0)"}}}>
+          <div style={{fontSize:"20px",fontWeight:900,color:k.color||B.gold,lineHeight:1}}>{k.value}</div>
+          <div style={{fontSize:"9px",fontWeight:700,color:B.teal400,textTransform:"uppercase",letterSpacing:"0.5px",marginTop:"4px"}}>{k.label}</div>
           {k.sub&&<div style={{fontSize:"9px",color:B.teal400,marginTop:"2px"}}>{k.sub}</div>}
         </div>
       ))}
@@ -1685,7 +1720,7 @@ function ExpenseManager(){
     try{
       const fields={};
       const expense=expenses.find(e=>e.id===itemId);
-      const isCC=expense?.ExpenseType==="Credit Card Reconciliation";
+      const isCC=isCCLike(expense?.ExpenseType);
 
       if(action==="save_edits"){
         // Save admin edits without changing status
@@ -1799,19 +1834,31 @@ function ExpenseManager(){
 
   // Login screen
   if(!authed){
-    return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:C.headerBg}}>
-      <div style={{textAlign:"center"}}>
-        <div style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.08em",color:C.gold500,marginBottom:4}}>NewShire Property Management</div>
-        <h1 style={{fontSize:22,fontWeight:700,color:"#FFFFFF",letterSpacing:"0.05em",marginBottom:20}}>EXPENSE MANAGER</h1>
-        {authError?<div style={{color:"#F87171",fontSize:13,marginBottom:16}}>{authError}</div>:
-          <div style={{color:C.teal300,fontSize:13,marginBottom:16}}>Connecting...</div>}
+    return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:C.headerBg,backgroundImage:"radial-gradient(ellipse at 30% 70%, rgba(205,160,75,0.06) 0%, transparent 60%), radial-gradient(ellipse at 70% 30%, rgba(58,101,119,0.15) 0%, transparent 60%)"}}>
+      <div style={{textAlign:"center",padding:"0 24px"}}>
+        {/* Logo mark */}
+        <div style={{width:56,height:56,borderRadius:12,background:`linear-gradient(135deg,${C.gold500},${C.gold700})`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",boxShadow:"0 4px 20px rgba(205,160,75,0.3)"}}>
+          <span style={{fontSize:26,fontWeight:900,color:C.headerBg,fontFamily:"Georgia,serif"}}>E</span>
+        </div>
+        <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.15em",color:C.gold400,marginBottom:6}}>NewShire Property Management</div>
+        <h1 style={{fontSize:24,fontWeight:700,color:"#FFFFFF",letterSpacing:"0.05em",marginBottom:8}}>Expense Manager</h1>
+        <div style={{width:40,height:2,background:C.gold500,margin:"0 auto 24px",borderRadius:1}}/>
+        {authError
+          ?<div style={{background:"rgba(248,113,113,0.1)",border:"1px solid rgba(248,113,113,0.3)",borderRadius:6,padding:"8px 16px",color:"#F87171",fontSize:12,marginBottom:20,maxWidth:300}}>{authError}</div>
+          :<div style={{color:C.teal300,fontSize:12,marginBottom:20}}>Sign in with your NewShire Microsoft account</div>
+        }
         <button onClick={async()=>{try{await getToken();setAuthed(true);setUserEmail(getUserEmail());setUserName(getUserName());setAuthError(null)}catch(e){setAuthError(e.message)}}} style={{
-          ...({display:"inline-flex",alignItems:"center",gap:8,padding:"10px 24px",fontSize:14,fontWeight:600,fontFamily:fb,color:C.headerBg,background:C.gold500,border:"none",borderRadius:4,cursor:"pointer"})
-        }}>
-          Sign In with Microsoft
+          display:"inline-flex",alignItems:"center",gap:10,padding:"11px 28px",fontSize:13,fontWeight:700,fontFamily:fb,
+          color:C.headerBg,background:C.gold500,border:"none",borderRadius:6,cursor:"pointer",
+          boxShadow:"0 2px 12px rgba(205,160,75,0.4)",letterSpacing:"0.02em",transition:"all 0.2s",
+        }}
+          onMouseEnter={e=>{e.currentTarget.style.background=C.gold400;e.currentTarget.style.transform="translateY(-1px)"}}
+          onMouseLeave={e=>{e.currentTarget.style.background=C.gold500;e.currentTarget.style.transform="translateY(0)"}}>
+          <svg width="16" height="16" viewBox="0 0 23 23" fill="none"><rect x="1" y="1" width="10" height="10" fill="#f25022"/><rect x="12" y="1" width="10" height="10" fill="#7fba00"/><rect x="1" y="12" width="10" height="10" fill="#00a4ef"/><rect x="12" y="12" width="10" height="10" fill="#ffb900"/></svg>
+          Sign in with Microsoft
         </button>
       </div>
-      <div style={{position:"fixed",bottom:12,fontSize:9,color:"rgba(255,255,255,0.3)"}}>v{CONFIG.version}</div>
+      <div style={{position:"fixed",bottom:16,fontSize:9,color:"rgba(255,255,255,0.25)",letterSpacing:"0.05em"}}>v{CONFIG.version}</div>
     </div>;
   }
 
@@ -1827,25 +1874,35 @@ function ExpenseManager(){
     {settings.testMode&&<div style={{background:C.error,color:C.white,textAlign:"center",padding:"4px",fontSize:"10px",fontWeight:800,letterSpacing:"1px",textTransform:"uppercase"}}>{"\u26A0"} TEST MODE — All emails redirect to your inbox only {"\u26A0"}</div>}
 
     {/* Header — dark teal with gold accent */}
-    <div style={{background:C.headerBg,borderBottom:`2px solid ${C.gold500}`,padding:"0 20px",display:"flex",justifyContent:"space-between",alignItems:"center",height:56}} className="no-print">
-      <div>
-        <div style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.08em",color:C.gold500}}>NewShire Property Management</div>
-        <div style={{fontSize:16,fontWeight:700,color:"#FFFFFF",letterSpacing:"0.05em"}}>EXPENSE MANAGER</div>
-      </div>
+    <div style={{background:C.headerBg,borderBottom:`2px solid ${C.gold500}`,padding:"0 20px",display:"flex",justifyContent:"space-between",alignItems:"center",height:58}} className="no-print">
       <div style={{display:"flex",alignItems:"center",gap:12}}>
-        <span style={{fontSize:13,color:C.teal100}}>{userName}</span>
-        <span style={{fontSize:11,color:C.teal300}}>({ROLE_LABELS[userRole]})</span>
+        <div style={{width:32,height:32,borderRadius:6,background:`linear-gradient(135deg,${C.gold500},${C.gold700})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <span style={{fontSize:16,fontWeight:900,color:C.headerBg,fontFamily:"Georgia,serif"}}>E</span>
+        </div>
+        <div>
+          <div style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.12em",color:C.gold400,lineHeight:1.2}}>NewShire Property Management</div>
+          <div style={{fontSize:15,fontWeight:700,color:"#FFFFFF",letterSpacing:"0.04em",lineHeight:1.3}}>Expense Manager</div>
+        </div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:12,fontWeight:600,color:C.teal100,lineHeight:1.3}}>{userName}</div>
+          <div style={{fontSize:10,color:C.teal300,lineHeight:1.2}}>{ROLE_LABELS[userRole]}</div>
+        </div>
+        <div style={{width:32,height:32,borderRadius:"50%",background:C.teal600,border:`1px solid ${C.teal400}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:C.white,flexShrink:0}}>
+          {(userName||userEmail||"?")[0].toUpperCase()}
+        </div>
       </div>
     </div>
 
     {/* Tab bar — white bg, gold active indicator */}
-    <div style={{background:C.white,borderBottom:`1px solid ${C.gray200}`,display:"flex",gap:0,padding:"0 20px",overflowX:"auto"}} className="no-print">
+    <div style={{background:C.white,borderBottom:`1px solid ${C.gray200}`,display:"flex",gap:0,padding:"0 20px",overflowX:"auto",position:"sticky",top:0,zIndex:100,boxShadow:"0 1px 4px rgba(28,55,64,0.06)"}} className="no-print">
       {tabs.map(t=>(
         <button key={t.id} onClick={()=>{setTab(t.id);setEditExpense(null)}} style={{
-          padding:"12px 20px",fontSize:14,fontWeight:tab===t.id?600:400,fontFamily:fb,
+          padding:"11px 18px",fontSize:13,fontWeight:tab===t.id?700:400,fontFamily:fb,
           color:tab===t.id?C.teal700:C.gray400,background:"none",border:"none",cursor:"pointer",
           borderBottom:tab===t.id?`2px solid ${C.gold500}`:"2px solid transparent",
-          transition:"color 0.2s, border-color 0.2s",whiteSpace:"nowrap",
+          transition:"color 0.15s, border-color 0.15s",whiteSpace:"nowrap",letterSpacing:"0.01em",
         }}>{t.label}</button>
       ))}
     </div>
@@ -1854,13 +1911,38 @@ function ExpenseManager(){
     <div style={{maxWidth:1200,margin:"0 auto",padding:"24px 20px"}}>
       {loading?<Card><div style={{textAlign:"center",color:B.teal300,padding:"20px"}}>Loading expenses...</div></Card>:<>
 
-        {tab==="submit"&&<ExpenseForm settings={settings} users={users} userEmail={userEmail} employees={employees} isAdmin={isAdmin} onSubmit={async({fields,expenseId})=>{
-          // Fire submit notification
-          sendNotificationEmail(fields,"submitted",{
-            routing:routing||DEFAULT_ROUTING,settings,users,expenseId:expenseId?.toString()
-          }).catch(e=>console.warn("Submit email error:",e));
-          await refresh();setTab("my");setToast({message:"Expense submitted!",type:"success"});
-        }}/>}
+        {tab==="submit"&&<>
+          {/* Rejected expenses — needs resubmission */}
+          {(()=>{const rejected=expenses.filter(e=>e.Status==="Rejected"&&e.SubmittedBy?.toLowerCase()===userEmail?.toLowerCase());return rejected.length>0&&<Card style={{marginBottom:8,border:`1px solid ${C.error}`,background:"rgba(196,75,59,0.03)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,borderBottom:`2px solid ${C.error}`,paddingBottom:6}}>
+              <h4 style={{fontSize:"11px",fontWeight:800,color:C.error,textTransform:"uppercase",letterSpacing:"0.8px",margin:0}}>&#9888; Rejected — Needs Resubmission ({rejected.length})</h4>
+            </div>
+            {rejected.map(exp=><div key={exp.id} onClick={()=>setEditExpense(exp)} style={{background:C.white,border:`1px solid ${C.gray200}`,borderLeft:`3px solid ${C.error}`,borderRadius:6,padding:"9px 10px",marginBottom:4,cursor:"pointer",transition:"background 0.15s"}}
+              onMouseEnter={e=>e.currentTarget.style.background=C.teal50}
+              onMouseLeave={e=>e.currentTarget.style.background=C.white}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flex:1}}>
+                  <StatusBadge status="Rejected"/>
+                  <span style={{fontSize:"12px",fontWeight:700,color:C.teal700}}>{exp.ExpenseType}</span>
+                  {exp.Vendor&&<span style={{fontSize:"10px",color:C.gray400}}>• {exp.Vendor}</span>}
+                  {exp.Description&&<span style={{fontSize:"10px",color:C.gray400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:200}}>{exp.Description}</span>}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+                  <span style={{fontSize:"13px",fontWeight:800,color:C.error}}>{fmtMoney(exp.Amount)}</span>
+                  <span style={{fontSize:"10px",color:C.gray400}}>{fmtDate(exp.ExpenseDate)}</span>
+                  <span style={{fontSize:"10px",fontWeight:700,color:C.teal500}}>Click to edit &amp; resubmit →</span>
+                </div>
+              </div>
+              {exp.RejectionNotes&&<div style={{fontSize:"10px",color:C.error,marginTop:4,paddingTop:4,borderTop:`1px solid rgba(196,75,59,0.15)`}}>Reason: {exp.RejectionNotes}</div>}
+            </div>)}
+          </Card>})()}
+          <ExpenseForm settings={settings} users={users} userEmail={userEmail} employees={employees} isAdmin={isAdmin} onSubmit={async({fields,expenseId})=>{
+            sendNotificationEmail(fields,"submitted",{
+              routing:routing||DEFAULT_ROUTING,settings,users,expenseId:expenseId?.toString()
+            }).catch(e=>console.warn("Submit email error:",e));
+            await refresh();setTab("my");setToast({message:"Expense submitted!",type:"success"});
+          }}/>
+        </>}
 
         {tab==="my"&&!editExpense&&<ExpenseList expenses={expenses} title="My Expenses"
           filter={e=>e.SubmittedBy?.toLowerCase()===userEmail?.toLowerCase()}
@@ -1888,7 +1970,7 @@ function ExpenseManager(){
           <ExpenseList expenses={expenses} title="Approved — Awaiting Posting in AppFolio" filter={e=>e.Status==="Approved"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}
             headerActions={<>
-              <Btn v="secondary" onClick={()=>generateCCReport(expenses)} style={{fontSize:"9px",padding:"3px 10px"}}>CC — Pending AppFolio Posting (.xlsx)</Btn>
+              <Btn v="secondary" onClick={()=>generateCCReport(expenses)} style={{fontSize:"9px",padding:"3px 10px"}}>CC & Lowes — Pending AppFolio Posting (.xlsx)</Btn>
               <Btn v="secondary" onClick={()=>generateReimbursementReconReport(expenses)} style={{fontSize:"9px",padding:"3px 10px"}}>Reimbursements — Pending AppFolio Posting (.xlsx)</Btn>
             </>}/>
           <ExpenseList expenses={expenses} title="Pending Payment" filter={e=>e.Status==="Pending Payment"}
@@ -1906,7 +1988,7 @@ function ExpenseManager(){
           onCancel={()=>setReviewExpense(null)}
           onApprove={async(itemId,fields)=>{
             const expense=expenses.find(e=>e.id===itemId);
-            const isCC=fields.ExpenseType==="Credit Card Reconciliation"||expense?.ExpenseType==="Credit Card Reconciliation";
+            const isCC=isCCLike(fields.ExpenseType)||isCCLike(expense?.ExpenseType);
             const flaggedAppFolio=fields.Description?.includes("[APPFOLIO-WO]")||expense?.Description?.includes("[APPFOLIO-WO]");
 
             fields.ApprovedBy=userEmail;fields.ApprovedDate=new Date().toISOString();
