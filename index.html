@@ -39,7 +39,7 @@ const CONFIG={
   configListName:"Expense Config",
   employeesListName:"Employees",
   googleMapsKey:"AIzaSyCgm0GDTAcsYUJtTVrZLR3xS8sazfqXxSY",
-  version:"3.3.4",
+  version:"3.3.5",
 };
 const GRAPH="https://graph.microsoft.com/v1.0";
 
@@ -1235,7 +1235,7 @@ async function generateCCReport(expenses){
   for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:6})];if(cell&&typeof cell.v==="number")cell.z="$#,##0.00"}
   // Make receipt URLs clickable hyperlinks
   for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:8})];if(cell&&cell.v){const urls=String(cell.v).split("\n").filter(Boolean);if(urls.length===1){cell.l={Target:urls[0],Tooltip:urls[0]}}}}
-  XLSX.utils.book_append_sheet(wb,ws,"CC & Lowes Pending AppFolio Posting");
+  XLSX.utils.book_append_sheet(wb,ws,"CC & Lowes Pending Posting");
   const d=new Date();XLSX.writeFile(wb,`CC_Lowes_Pending_AppFolio_Posting_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`);
 }
 
