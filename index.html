@@ -39,7 +39,7 @@ const CONFIG={
   configListName:"Expense Config",
   employeesListName:"Employees",
   googleMapsKey:"AIzaSyCgm0GDTAcsYUJtTVrZLR3xS8sazfqXxSY",
-  version:"3.3.3",
+  version:"3.3.4",
 };
 const GRAPH="https://graph.microsoft.com/v1.0";
 
@@ -207,23 +207,23 @@ async function deleteExpenseAttachments(expenseId){
 }
 
 // Config helpers — store JSON blob in a single list item
+// Errors must propagate: silent fallback to DEFAULT_USERS strips non-default admins of their role.
 async function loadConfig(){
-  try{
-    const items=await getListItems(CONFIG.configListName,"id,fields","fields",null,1);
-    if(items.length>0&&items[0].fields?.ConfigJSON){
-      const stored=JSON.parse(items[0].fields.ConfigJSON);
-      // Merge new default expense types in (handles version upgrades)
-      const storedTypes=stored.settings?.expenseTypes||[];
-      const mergedTypes=[...storedTypes];
-      DEFAULT_EXPENSE_TYPES.forEach(t=>{if(!mergedTypes.includes(t))mergedTypes.push(t)});
-      if(stored.settings)stored.settings.expenseTypes=mergedTypes;
-      // Merge new default routing entries
-      const storedRouting=stored.routing||{};
-      DEFAULT_EXPENSE_TYPES.forEach(t=>{if(!storedRouting[t])storedRouting[t]={approvers:DEFAULT_ROUTING[t]?.approvers||[],accounting:[]}});
-      stored.routing=storedRouting;
-      return stored;
-    }
-  }catch(e){console.warn("Config load failed, using defaults:",e)}
+  const items=await getListItems(CONFIG.configListName,"id,fields","fields",null,1);
+  if(items.length>0&&items[0].fields?.ConfigJSON){
+    const stored=JSON.parse(items[0].fields.ConfigJSON);
+    // Merge new default expense types in (handles version upgrades)
+    const storedTypes=stored.settings?.expenseTypes||[];
+    const mergedTypes=[...storedTypes];
+    DEFAULT_EXPENSE_TYPES.forEach(t=>{if(!mergedTypes.includes(t))mergedTypes.push(t)});
+    if(stored.settings)stored.settings.expenseTypes=mergedTypes;
+    // Merge new default routing entries
+    const storedRouting=stored.routing||{};
+    DEFAULT_EXPENSE_TYPES.forEach(t=>{if(!storedRouting[t])storedRouting[t]={approvers:DEFAULT_ROUTING[t]?.approvers||[],accounting:[]}});
+    stored.routing=storedRouting;
+    return stored;
+  }
+  // Empty list is a legit first-run state; only here do we use defaults.
   return{settings:DEFAULT_SETTINGS,users:DEFAULT_USERS,routing:DEFAULT_ROUTING};
 }
 
@@ -1189,9 +1189,10 @@ async function buildSharingLinksMap(expenseList){
 }
 
 // CC / Lowes Account Pending AppFolio Posting Report
+// Filter is Approved only — Processed items are already posted to AppFolio and shouldn't appear in a "pending" export.
 async function generateCCReport(expenses){
-  const inFlow=expenses.filter(e=>isCCLike(e.ExpenseType)&&["Approved","Processed"].includes(e.Status));
-  if(!inFlow.length){alert("No approved or processed CC / Lowes Account transactions found.");return}
+  const inFlow=expenses.filter(e=>isCCLike(e.ExpenseType)&&e.Status==="Approved");
+  if(!inFlow.length){alert("No CC / Lowes Account transactions pending AppFolio posting.");return}
   // Generate sharing links for accounting (no login required)
   const attMap=await buildSharingLinksMap(inFlow);
   const rows=[];
@@ -1697,22 +1698,29 @@ function ExpenseManager(){
     })();
   },[]);
 
-  // Load data
+  // Load data — each call independent so one transient failure can't strip roles
   useEffect(()=>{
     if(!authed)return;
     (async()=>{
       setLoading(true);
+      let cfgErr=null,expErr=null;
       try{
-        const[cfg,exps,emps]=await Promise.all([loadConfig(),loadExpenses(),loadEmployeeDirectory()]);
+        const cfg=await loadConfig();
         setSettings(cfg.settings||DEFAULT_SETTINGS);
         setUsers(cfg.users||DEFAULT_USERS);
         setRouting(cfg.routing||DEFAULT_ROUTING);
+      }catch(e){cfgErr=e;console.error("Config load failed:",e)}
+      try{
+        const exps=await loadExpenses();
         setExpenses(exps);
+      }catch(e){expErr=e;console.error("Expenses load failed:",e)}
+      try{
+        const emps=await loadEmployeeDirectory();
         if(emps){setEmployees(emps);console.log("[Expense] Loaded",emps.length,"employees from master list")}
-      }catch(e){
-        console.error("Load error:",e);
-        setToast({message:"Failed to load data: "+e.message,type:"error"});
-      }finally{setLoading(false)}
+      }catch(e){console.warn("Employee directory load failed:",e)}
+      if(cfgErr)setToast({message:"Couldn't load user/role config — your access may be limited. Try the refresh button.",type:"error"});
+      else if(expErr)setToast({message:"Failed to load expenses: "+expErr.message,type:"error"});
+      setLoading(false);
     })();
   },[authed]);
 
@@ -1722,6 +1730,32 @@ function ExpenseManager(){
       const exps=await loadExpenses();
       setExpenses(exps);
     }catch(e){console.error("Refresh error:",e)}
+  };
+
+  // Full reload — used by the header refresh button to recover from a stripped role / stale data
+  const[refreshing,setRefreshing]=useState(false);
+  const fullRefresh=async()=>{
+    setRefreshing(true);
+    let cfgErr=null;
+    try{
+      const cfg=await loadConfig();
+      setSettings(cfg.settings||DEFAULT_SETTINGS);
+      setUsers(cfg.users||DEFAULT_USERS);
+      setRouting(cfg.routing||DEFAULT_ROUTING);
+    }catch(e){cfgErr=e;console.error("Config reload failed:",e)}
+    try{const exps=await loadExpenses();setExpenses(exps)}catch(e){console.error("Expenses reload failed:",e)}
+    try{const emps=await loadEmployeeDirectory();if(emps)setEmployees(emps)}catch(e){console.warn("Employees reload failed:",e)}
+    setRefreshing(false);
+    setToast(cfgErr?{message:"Reload failed: "+cfgErr.message,type:"error"}:{message:"Refreshed",type:"success"});
+  };
+
+  // Wrapped report runner — gives the user visual feedback during the slow sharing-link loop
+  const[reportLoading,setReportLoading]=useState(false);
+  const runReport=async(fn,label)=>{
+    setReportLoading(true);
+    try{await fn(expenses)}
+    catch(e){console.error(label+" failed:",e);setToast({message:label+" failed: "+e.message,type:"error"})}
+    finally{setReportLoading(false)}
   };
 
   // Actions
@@ -1895,6 +1929,18 @@ function ExpenseManager(){
         </div>
       </div>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <button onClick={fullRefresh} disabled={refreshing} title="Reload users, expenses, and config from SharePoint" style={{
+          background:"transparent",border:`1px solid ${C.teal400}`,color:C.teal100,
+          width:32,height:32,borderRadius:"50%",cursor:refreshing?"wait":"pointer",
+          display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
+          opacity:refreshing?0.5:1,transition:"opacity 0.15s,background 0.15s",
+        }}
+          onMouseEnter={e=>{if(!refreshing)e.currentTarget.style.background="rgba(255,255,255,0.06)"}}
+          onMouseLeave={e=>{e.currentTarget.style.background="transparent"}}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{transform:refreshing?"rotate(180deg)":"none",transition:"transform 0.4s"}}>
+            <path d="M13.5 2.5v3.5h-3.5"/><path d="M13.1 6A6 6 0 1 0 14 8.5"/>
+          </svg>
+        </button>
         <div style={{textAlign:"right"}}>
           <div style={{fontSize:12,fontWeight:600,color:C.teal100,lineHeight:1.3}}>{userName}</div>
           <div style={{fontSize:10,color:C.teal300,lineHeight:1.2}}>{ROLE_LABELS[userRole]}</div>
@@ -1980,8 +2026,8 @@ function ExpenseManager(){
           <ExpenseList expenses={expenses} title="Approved — Awaiting Posting in AppFolio" filter={e=>e.Status==="Approved"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}
             headerActions={<>
-              <Btn v="secondary" onClick={()=>generateCCReport(expenses)} style={{fontSize:"9px",padding:"3px 10px"}}>CC & Lowes — Pending AppFolio Posting (.xlsx)</Btn>
-              <Btn v="secondary" onClick={()=>generateReimbursementReconReport(expenses)} style={{fontSize:"9px",padding:"3px 10px"}}>Reimbursements — Pending AppFolio Posting (.xlsx)</Btn>
+              <Btn v="secondary" disabled={reportLoading} onClick={()=>runReport(generateCCReport,"CC & Lowes export")} style={{fontSize:"9px",padding:"3px 10px"}}>{reportLoading?"Generating…":"CC & Lowes — Pending AppFolio Posting (.xlsx)"}</Btn>
+              <Btn v="secondary" disabled={reportLoading} onClick={()=>runReport(generateReimbursementReconReport,"Reimbursement export")} style={{fontSize:"9px",padding:"3px 10px"}}>{reportLoading?"Generating…":"Reimbursements — Pending AppFolio Posting (.xlsx)"}</Btn>
             </>}/>
           <ExpenseList expenses={expenses} title="Pending Payment" filter={e=>e.Status==="Pending Payment"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}
