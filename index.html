@@ -123,12 +123,33 @@ const msalConfig={auth:{clientId:CONFIG.clientId,authority:`https://login.micros
 let msalInstance=null;
 try{msalInstance=new msal.PublicClientApplication(msalConfig)}catch(e){console.error("MSAL init failed:",e)}
 
+// Background token refresh can't fall back to loginPopup() itself — browsers block
+// popups that aren't triggered by a direct click, so a popup opened from inside a
+// useEffect (e.g. loading attachments) is silently blocked. Instead, surface a
+// dismissable "Reconnect" banner (see authExpiredListeners) that the user can click,
+// which re-runs the interactive login as a real user gesture.
+const authExpiredListeners=new Set();
+function notifyAuthExpired(){authExpiredListeners.forEach(fn=>fn())}
+function onAuthExpiredChange(fn){authExpiredListeners.add(fn);return()=>authExpiredListeners.delete(fn)}
+
 async function getToken(scopes=["https://graph.microsoft.com/.default"]){
   if(!msalInstance)throw new Error("MSAL not initialized");
   const accounts=msalInstance.getAllAccounts();
-  if(accounts.length===0){const resp=await msalInstance.loginPopup({scopes});return resp.accessToken}
-  try{const resp=await msalInstance.acquireTokenSilent({scopes,account:accounts[0]});return resp.accessToken}
-  catch(e){const resp=await msalInstance.loginPopup({scopes});return resp.accessToken}
+  if(accounts.length>0){
+    try{const resp=await msalInstance.acquireTokenSilent({scopes,account:accounts[0]});return resp.accessToken}
+    catch(e){/* fall through to interactive */}
+  }
+  try{
+    const resp=await msalInstance.loginPopup({scopes});
+    return resp.accessToken;
+  }catch(e){
+    notifyAuthExpired();
+    throw new Error("Your Microsoft sign-in expired. Click \"Reconnect\" at the top of the page to continue.");
+  }
+}
+
+async function reconnect(scopes=["https://graph.microsoft.com/.default"]){
+  return msalInstance.loginPopup({scopes});
 }
 
 function getUserEmail(){
@@ -1026,6 +1047,7 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
         {expense.ApprovedDate&&row("Reviewed",fmtDate(expense.ApprovedDate))}
         {expense.ProcessedBy&&row("Processed By",expense.ProcessedBy)}
         {expense.ProcessedDate&&row("Processed",fmtDate(expense.ProcessedDate))}
+        {expense.PaidDate&&row("Paid",fmtDate(expense.PaidDate))}
         {expense.RejectionNotes&&row("Rejection Reason",expense.RejectionNotes,{color:B.no,bold:true})}
         {expense.Description?.includes("[APPFOLIO-WO]")&&<div style={{background:"rgba(212,150,10,0.12)",border:"1px solid rgba(212,150,10,0.4)",borderRadius:"6px",padding:"8px 12px",marginTop:"8px"}}>
           <span style={{fontSize:"11px",fontWeight:800,color:"#D4960A"}}>⚠ Submitter indicated this was already entered in AppFolio under a Work Order</span>
@@ -1108,6 +1130,35 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
 }
 
 // ============================================================
+// QUEUE FILTER BAR (date range + multi-select type)
+// ============================================================
+function QueueFilterBar({settings,dateFrom,dateTo,types,onDateFrom,onDateTo,onTypes,active}){
+  const allTypes=settings?.expenseTypes||DEFAULT_EXPENSE_TYPES;
+  const toggleType=t=>onTypes(types.includes(t)?types.filter(x=>x!==t):[...types,t]);
+  return <Card style={{marginBottom:"8px",padding:"10px 14px"}}>
+    <div style={{display:"flex",alignItems:"flex-end",gap:"14px",flexWrap:"wrap"}}>
+      <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
+        <F label="From" style={{marginBottom:0}}><Inp type="date" value={dateFrom} onChange={e=>onDateFrom(e.target.value)} style={{width:"140px"}}/></F>
+        <F label="To" style={{marginBottom:0}}><Inp type="date" value={dateTo} onChange={e=>onDateTo(e.target.value)} style={{width:"140px"}}/></F>
+      </div>
+      <div>
+        <label style={lCss}>Type</label>
+        <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
+          {allTypes.map(t=>{
+            const on=types.includes(t);
+            return <button key={t} type="button" onClick={()=>toggleType(t)} style={{
+              fontFamily:fb,fontSize:"10px",fontWeight:700,cursor:"pointer",borderRadius:"9999px",padding:"5px 12px",
+              border:`1px solid ${on?C.gold500:C.gray200}`,background:on?C.gold50:B.white,color:on?C.gold700:B.teal400,
+            }}>{t}</button>;
+          })}
+        </div>
+      </div>
+      {active&&<Btn v="ghost" onClick={()=>{onDateFrom("");onDateTo("");onTypes([])}} style={{fontSize:"10px"}}>Clear filters</Btn>}
+    </div>
+  </Card>;
+}
+
+// ============================================================
 // EXPENSE LIST COMPONENT
 // ============================================================
 function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,onDelete,actionLoading,isSuperAdmin,headerActions}){
@@ -1143,6 +1194,7 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,o
           <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
             <span style={{fontSize:"13px",fontWeight:800,color:B.goldDim}}>{fmtMoney(exp.Amount)}</span>
             <span style={{fontSize:"10px",color:B.teal400}}>{fmtDate(exp.ExpenseDate)}</span>
+            {exp.Status==="Paid"&&exp.PaidDate&&<span style={{fontSize:"9px",fontWeight:700,color:B.ok,background:"rgba(45,138,90,0.1)",borderRadius:"9999px",padding:"1px 6px"}}>Paid {fmtDate(exp.PaidDate)}</span>}
             {/* Any admin can approve/reject */}
             {userRole==="admin"&&exp.Status==="Submitted"&&onAction&&<>
               <Btn v="small" style={{background:B.ok,color:B.white,fontSize:"9px",padding:"3px 8px"}} onClick={e=>{e.stopPropagation();onAction(exp.id,"approve")}} disabled={actionLoading}>{"\u2713"}</Btn>
@@ -1311,21 +1363,22 @@ async function generateReimbursementReconReport(expenses){
         "Status":exp.Status||"",
         "Approved By":exp.ApprovedBy||"",
         "Approved Date":exp.ApprovedDate?new Date(exp.ApprovedDate).toLocaleDateString("en-US"):"",
+        "Paid Date":exp.PaidDate?new Date(exp.PaidDate).toLocaleDateString("en-US"):"",
         "Receipts/Docs":attachLinks,
       });
     });
     const personTotal=exps.reduce((t,e)=>t+(e.Amount||0),0);
-    rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Property":"","Category":"","Description":`SUBTOTAL — ${name}`,"Amount":personTotal,"Status":"","Approved By":"","Approved Date":"","Receipts/Docs":""});
+    rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Property":"","Category":"","Description":`SUBTOTAL — ${name}`,"Amount":personTotal,"Status":"","Approved By":"","Approved Date":"","Paid Date":"","Receipts/Docs":""});
   });
   const grandTotal=inFlow.reduce((t,e)=>t+(e.Amount||0),0);
-  rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Property":"","Category":"","Description":"GRAND TOTAL","Amount":grandTotal,"Status":"","Approved By":"","Approved Date":"","Receipts/Docs":""});
+  rows.push({"Employee":"","Date":"","Type":"","Vendor":"","Property":"","Category":"","Description":"GRAND TOTAL","Amount":grandTotal,"Status":"","Approved By":"","Approved Date":"","Paid Date":"","Receipts/Docs":""});
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.json_to_sheet(rows);
-  ws["!cols"]=[{wch:22},{wch:12},{wch:15},{wch:20},{wch:20},{wch:18},{wch:30},{wch:12},{wch:14},{wch:20},{wch:14},{wch:50}];
+  ws["!cols"]=[{wch:22},{wch:12},{wch:15},{wch:20},{wch:20},{wch:18},{wch:30},{wch:12},{wch:14},{wch:20},{wch:14},{wch:14},{wch:50}];
   const range=XLSX.utils.decode_range(ws["!ref"]);
   for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:7})];if(cell&&typeof cell.v==="number")cell.z="$#,##0.00"}
   // Make receipt URLs clickable hyperlinks
-  for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:11})];if(cell&&cell.v){const urls=String(cell.v).split("\n").filter(Boolean);if(urls.length===1){cell.l={Target:urls[0],Tooltip:urls[0]}}}}
+  for(let r=1;r<=range.e.r;r++){const cell=ws[XLSX.utils.encode_cell({r,c:12})];if(cell&&cell.v){const urls=String(cell.v).split("\n").filter(Boolean);if(urls.length===1){cell.l={Target:urls[0],Tooltip:urls[0]}}}}
   XLSX.utils.book_append_sheet(wb,ws,"Reimb Pending AppFolio Posting");
   const d=new Date();XLSX.writeFile(wb,`Reimbursements_Pending_AppFolio_Posting_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}.xlsx`);
 }
@@ -1652,6 +1705,16 @@ function AdminPanel({settings,users,routing,employees,onSave,saving}){
 function ExpenseManager(){
   const[authed,setAuthed]=useState(false);
   const[authError,setAuthError]=useState(null);
+  const[needsReconnect,setNeedsReconnect]=useState(false);
+  const[reconnecting,setReconnecting]=useState(false);
+
+  useEffect(()=>onAuthExpiredChange(()=>setNeedsReconnect(true)),[]);
+  const handleReconnect=async()=>{
+    setReconnecting(true);
+    try{await reconnect();setNeedsReconnect(false);window.location.reload()}
+    catch(e){setToast({message:"Reconnect failed: "+e.message,type:"error"})}
+    finally{setReconnecting(false)}
+  };
   const[userEmail,setUserEmail]=useState(null);
   const[userName,setUserName]=useState(null);
   const[settings,setSettings]=useState(DEFAULT_SETTINGS);
@@ -1667,6 +1730,9 @@ function ExpenseManager(){
   const[editExpense,setEditExpense]=useState(null);
   const[reviewExpense,setReviewExpense]=useState(null);
   const[adminSaving,setAdminSaving]=useState(false);
+  const[queueDateFrom,setQueueDateFrom]=useState("");
+  const[queueDateTo,setQueueDateTo]=useState("");
+  const[queueTypes,setQueueTypes]=useState([]);
 
   // Determine role
   const userRole=useMemo(()=>{
@@ -1682,6 +1748,14 @@ function ExpenseManager(){
     const u=users.find(x=>x.email.toLowerCase()===userEmail.toLowerCase());
     return u?.superAdmin===true;
   },[userEmail,users]);
+
+  const queueExpenses=useMemo(()=>expenses.filter(e=>{
+    if(queueDateFrom&&(!e.ExpenseDate||e.ExpenseDate.slice(0,10)<queueDateFrom))return false;
+    if(queueDateTo&&(!e.ExpenseDate||e.ExpenseDate.slice(0,10)>queueDateTo))return false;
+    if(queueTypes.length>0&&!queueTypes.includes(e.ExpenseType))return false;
+    return true;
+  }),[expenses,queueDateFrom,queueDateTo,queueTypes]);
+  const queueFilterActive=queueDateFrom||queueDateTo||queueTypes.length>0;
 
   // Auth
   useEffect(()=>{
@@ -1907,6 +1981,10 @@ function ExpenseManager(){
   }
 
   return <div style={{minHeight:"100vh",background:C.pageBg,fontFamily:fb}}>
+    {needsReconnect&&<div style={{position:"sticky",top:0,zIndex:2000,background:"#D35B4B",color:"#fff",padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"center",gap:"12px",fontSize:"12px",fontWeight:700}}>
+      <span>Your Microsoft sign-in expired — some data (including attachments) may not load.</span>
+      <button onClick={handleReconnect} disabled={reconnecting} style={{background:"#fff",color:"#D35B4B",border:"none",borderRadius:"4px",padding:"5px 14px",fontWeight:800,fontSize:"11px",cursor:reconnecting?"not-allowed":"pointer"}}>{reconnecting?"Reconnecting...":"Reconnect"}</button>
+    </div>}
     {toast&&<Toast message={toast.message} type={toast.type} onClose={()=>setToast(null)}/>}
 
     {/* Expense Detail Modal */}
@@ -2020,21 +2098,25 @@ function ExpenseManager(){
             setToast({message:"Expense updated & resubmitted!",type:"success"});
           }}/>}
 
+        {tab==="queue"&&!reviewExpense&&<QueueFilterBar
+          settings={settings} dateFrom={queueDateFrom} dateTo={queueDateTo} types={queueTypes}
+          onDateFrom={setQueueDateFrom} onDateTo={setQueueDateTo} onTypes={setQueueTypes} active={queueFilterActive}/>}
+
         {tab==="queue"&&isAdmin&&!reviewExpense&&<>
-          <ExpenseList expenses={expenses} title="Pending Approval" filter={e=>e.Status==="Submitted"}
+          <ExpenseList expenses={queueExpenses} title="Pending Approval" filter={e=>e.Status==="Submitted"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={exp=>setReviewExpense(exp)} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}/>
-          <ExpenseList expenses={expenses} title="Approved — Awaiting Posting in AppFolio" filter={e=>e.Status==="Approved"}
+          <ExpenseList expenses={queueExpenses} title="Approved — Awaiting Posting in AppFolio" filter={e=>e.Status==="Approved"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}
             headerActions={<>
               <Btn v="secondary" disabled={reportLoading} onClick={()=>runReport(generateCCReport,"CC & Lowes export")} style={{fontSize:"9px",padding:"3px 10px"}}>{reportLoading?"Generating…":"CC & Lowes — Pending AppFolio Posting (.xlsx)"}</Btn>
               <Btn v="secondary" disabled={reportLoading} onClick={()=>runReport(generateReimbursementReconReport,"Reimbursement export")} style={{fontSize:"9px",padding:"3px 10px"}}>{reportLoading?"Generating…":"Reimbursements — Pending AppFolio Posting (.xlsx)"}</Btn>
             </>}/>
-          <ExpenseList expenses={expenses} title="Pending Payment" filter={e=>e.Status==="Pending Payment"}
+          <ExpenseList expenses={queueExpenses} title="Pending Payment" filter={e=>e.Status==="Pending Payment"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} onDelete={handleDelete} actionLoading={actionLoading} isSuperAdmin={isSuperAdmin}
-            headerActions={<Btn v="secondary" onClick={()=>generateReimbursementPayrollReport(expenses)} style={{fontSize:"9px",padding:"3px 10px"}}>Reimbursements — Payroll (.xlsx)</Btn>}/>
-          <ExpenseList expenses={expenses} title="Rejected — Awaiting Resubmission" filter={e=>e.Status==="Rejected"}
+            headerActions={<Btn v="secondary" onClick={()=>generateReimbursementPayrollReport(queueExpenses)} style={{fontSize:"9px",padding:"3px 10px"}}>Reimbursements — Payroll (.xlsx)</Btn>}/>
+          <ExpenseList expenses={queueExpenses} title="Rejected — Awaiting Resubmission" filter={e=>e.Status==="Rejected"}
             userRole={userRole} userEmail={userEmail} onView={setViewExpense} onDelete={handleDelete} isSuperAdmin={isSuperAdmin}/>
-          <ExpenseList expenses={expenses} title="Recently Completed" filter={e=>["Processed","Paid"].includes(e.Status)}
+          <ExpenseList expenses={queueExpenses} title="Recently Completed" filter={e=>["Processed","Paid"].includes(e.Status)}
             userRole={userRole} userEmail={userEmail} onView={setViewExpense} onDelete={handleDelete} isSuperAdmin={isSuperAdmin}/>
         </>}
 
@@ -2092,11 +2174,11 @@ function ExpenseManager(){
         />}
 
         {tab==="queue"&&isAccounting&&<>
-          <ExpenseList expenses={expenses} title="Ready to Process" filter={e=>e.Status==="Approved"}
+          <ExpenseList expenses={queueExpenses} title="Ready to Process" filter={e=>e.Status==="Approved"}
             userRole={userRole} userEmail={userEmail} onAction={handleAction} onView={setViewExpense} actionLoading={actionLoading}/>
-          <ExpenseList expenses={expenses} title="Pending Payment" filter={e=>e.Status==="Pending Payment"}
+          <ExpenseList expenses={queueExpenses} title="Pending Payment" filter={e=>e.Status==="Pending Payment"}
             userRole={userRole} userEmail={userEmail} onView={setViewExpense}/>
-          <ExpenseList expenses={expenses} title="Completed" filter={e=>["Processed","Paid"].includes(e.Status)}
+          <ExpenseList expenses={queueExpenses} title="Completed" filter={e=>["Processed","Paid"].includes(e.Status)}
             userRole={userRole} userEmail={userEmail} onView={setViewExpense}/>
         </>}
 
