@@ -1132,12 +1132,24 @@ function ExpenseDetail({expense,onClose,onAction,onDelete,userRole,userEmail,isS
 // ============================================================
 // QUEUE FILTER BAR (date range + multi-select type)
 // ============================================================
-function QueueFilterBar({settings,dateFrom,dateTo,types,onDateFrom,onDateTo,onTypes,active}){
+const QUEUE_DATE_FIELDS=[
+  {value:"ExpenseDate",label:"Expense Date"},
+  {value:"SubmittedDate",label:"Submitted Date"},
+  {value:"ApprovedDate",label:"Approved Date"},
+  {value:"ProcessedDate",label:"Processed / Completed Date"},
+  {value:"PaidDate",label:"Paid Date"},
+];
+function QueueFilterBar({settings,dateField,dateFrom,dateTo,types,onDateField,onDateFrom,onDateTo,onTypes,active}){
   const allTypes=settings?.expenseTypes||DEFAULT_EXPENSE_TYPES;
   const toggleType=t=>onTypes(types.includes(t)?types.filter(x=>x!==t):[...types,t]);
   return <Card style={{marginBottom:"8px",padding:"10px 14px"}}>
     <div style={{display:"flex",alignItems:"flex-end",gap:"14px",flexWrap:"wrap"}}>
       <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
+        <F label="Date Field" style={{marginBottom:0}}>
+          <select value={dateField} onChange={e=>onDateField(e.target.value)} style={{...inputStyle,cursor:"pointer",width:"180px"}}>
+            {QUEUE_DATE_FIELDS.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}
+          </select>
+        </F>
         <F label="From" style={{marginBottom:0}}><Inp type="date" value={dateFrom} onChange={e=>onDateFrom(e.target.value)} style={{width:"140px"}}/></F>
         <F label="To" style={{marginBottom:0}}><Inp type="date" value={dateTo} onChange={e=>onDateTo(e.target.value)} style={{width:"140px"}}/></F>
       </div>
@@ -1153,7 +1165,7 @@ function QueueFilterBar({settings,dateFrom,dateTo,types,onDateFrom,onDateTo,onTy
           })}
         </div>
       </div>
-      {active&&<Btn v="ghost" onClick={()=>{onDateFrom("");onDateTo("");onTypes([])}} style={{fontSize:"10px"}}>Clear filters</Btn>}
+      {active&&<Btn v="ghost" onClick={()=>{onDateField("ExpenseDate");onDateFrom("");onDateTo("");onTypes([])}} style={{fontSize:"10px"}}>Clear filters</Btn>}
     </div>
   </Card>;
 }
@@ -1730,6 +1742,7 @@ function ExpenseManager(){
   const[editExpense,setEditExpense]=useState(null);
   const[reviewExpense,setReviewExpense]=useState(null);
   const[adminSaving,setAdminSaving]=useState(false);
+  const[queueDateField,setQueueDateField]=useState("ExpenseDate");
   const[queueDateFrom,setQueueDateFrom]=useState("");
   const[queueDateTo,setQueueDateTo]=useState("");
   const[queueTypes,setQueueTypes]=useState([]);
@@ -1750,11 +1763,16 @@ function ExpenseManager(){
   },[userEmail,users]);
 
   const queueExpenses=useMemo(()=>expenses.filter(e=>{
-    if(queueDateFrom&&(!e.ExpenseDate||e.ExpenseDate.slice(0,10)<queueDateFrom))return false;
-    if(queueDateTo&&(!e.ExpenseDate||e.ExpenseDate.slice(0,10)>queueDateTo))return false;
+    if(queueDateFrom||queueDateTo){
+      const v=e[queueDateField];
+      if(!v)return false;
+      const d=v.slice(0,10);
+      if(queueDateFrom&&d<queueDateFrom)return false;
+      if(queueDateTo&&d>queueDateTo)return false;
+    }
     if(queueTypes.length>0&&!queueTypes.includes(e.ExpenseType))return false;
     return true;
-  }),[expenses,queueDateFrom,queueDateTo,queueTypes]);
+  }),[expenses,queueDateField,queueDateFrom,queueDateTo,queueTypes]);
   const queueFilterActive=queueDateFrom||queueDateTo||queueTypes.length>0;
 
   // Auth
@@ -2099,8 +2117,8 @@ function ExpenseManager(){
           }}/>}
 
         {tab==="queue"&&!reviewExpense&&<QueueFilterBar
-          settings={settings} dateFrom={queueDateFrom} dateTo={queueDateTo} types={queueTypes}
-          onDateFrom={setQueueDateFrom} onDateTo={setQueueDateTo} onTypes={setQueueTypes} active={queueFilterActive}/>}
+          settings={settings} dateField={queueDateField} dateFrom={queueDateFrom} dateTo={queueDateTo} types={queueTypes}
+          onDateField={setQueueDateField} onDateFrom={setQueueDateFrom} onDateTo={setQueueDateTo} onTypes={setQueueTypes} active={queueFilterActive}/>}
 
         {tab==="queue"&&isAdmin&&!reviewExpense&&<>
           <ExpenseList expenses={queueExpenses} title="Pending Approval" filter={e=>e.Status==="Submitted"}
