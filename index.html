@@ -1231,6 +1231,10 @@ function ExpenseList({expenses,title,filter,userRole,userEmail,onAction,onView,o
         </div>
       </div>
     )})}
+    <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:"8px",marginTop:"6px",paddingTop:"8px",borderTop:`1px solid ${B.border}`}}>
+      <span style={{fontSize:"10px",fontWeight:700,color:B.teal400,textTransform:"uppercase",letterSpacing:"0.5px"}}>Total</span>
+      <span style={{fontSize:"14px",fontWeight:800,color:B.goldDim}}>{fmtMoney(filtered.reduce((t,e)=>t+(e.Amount||0),0))}</span>
+    </div>
   </Card>;
 }
 
